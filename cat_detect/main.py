@@ -23,6 +23,7 @@ def parse_args():
     p.add_argument("--save", action="store_true", help="Save frames with detections to captures/")
     p.add_argument("--ntfy", type=str, default=None, help="ntfy.sh topic name for push notifications")
     p.add_argument("--cooldown", type=int, default=30, help="Seconds between notifications (default: 30)")
+    p.add_argument("--flip", action="store_true", help="Rotate camera image 180°")
     p.add_argument("--stream", action="store_true", help="Serve MJPEG video stream over HTTP")
     p.add_argument("--stream-port", type=int, default=8085, help="Port for MJPEG stream (default: 8085)")
     return p.parse_args()
@@ -67,6 +68,9 @@ def run():
                 print("Warning: failed to grab frame, retrying...")
                 time.sleep(0.5)
                 continue
+
+            if args.flip:
+                frame = cv2.flip(frame, -1)
 
             detections = detector.detect(frame)
 
