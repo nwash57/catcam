@@ -8,6 +8,7 @@ import cv2
 from cat_detect.camera import Camera
 from cat_detect.detector import Detector
 from cat_detect.notify import send_notification
+from cat_detect.stream import start_stream
 
 CAPTURES_DIR = Path("captures")
 
@@ -22,6 +23,8 @@ def parse_args():
     p.add_argument("--save", action="store_true", help="Save frames with detections to captures/")
     p.add_argument("--ntfy", type=str, default=None, help="ntfy.sh topic name for push notifications")
     p.add_argument("--cooldown", type=int, default=30, help="Seconds between notifications (default: 30)")
+    p.add_argument("--stream", action="store_true", help="Serve MJPEG video stream over HTTP")
+    p.add_argument("--stream-port", type=int, default=8085, help="Port for MJPEG stream (default: 8085)")
     return p.parse_args()
 
 
@@ -46,7 +49,13 @@ def run():
     detector = Detector(args.model, args.threshold)
     cooldown_tracker = {}
 
+    stream = None
+    if args.stream:
+        stream = start_stream(args.stream_port)
+
     print(f"Starting wildlife detector (camera={args.camera}, interval={args.interval}s)")
+    if stream:
+        print(f"MJPEG stream → http://0.0.0.0:{args.stream_port}/")
     if args.ntfy:
         print(f"Notifications → ntfy.sh/{args.ntfy} (cooldown={args.cooldown}s)")
     print("Press Ctrl+C to stop.\n")
@@ -73,6 +82,9 @@ def run():
                     cooldown_tracker=cooldown_tracker,
                     cooldown_seconds=args.cooldown,
                 )
+
+            if stream:
+                stream.set_frame(frame)
 
             if args.show:
                 if not detections:
