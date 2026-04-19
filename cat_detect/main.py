@@ -11,9 +11,6 @@ from cat_detect.notify import send_notification
 from cat_detect.recorder import Recorder
 from cat_detect.stream import start_stream
 
-CAPTURES_DIR = Path("captures")
-
-
 def parse_args():
     p = argparse.ArgumentParser(description="Wildlife detector — USB camera + YOLOv8")
     p.add_argument("--camera", type=int, default=0, help="Camera device index (default: 0)")
@@ -29,6 +26,8 @@ def parse_args():
     p.add_argument("--stream-port", type=int, default=8085, help="Port for MJPEG stream (default: 8085)")
     p.add_argument("--record-timeout", type=float, default=20.0,
                    help="Seconds of no detections before stopping video recording (default: 20)")
+    p.add_argument("--captures-dir", type=str, default="captures",
+                   help="Directory to save snapshots and recordings (default: captures)")
     return p.parse_args()
 
 
@@ -40,10 +39,10 @@ def draw_detections(frame, detections):
         cv2.putText(frame, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
 
-def save_frame(frame):
-    CAPTURES_DIR.mkdir(exist_ok=True)
+def save_frame(frame, captures_dir):
+    captures_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = CAPTURES_DIR / f"detection_{ts}.jpg"
+    path = captures_dir / f"detection_{ts}.jpg"
     cv2.imwrite(str(path), frame)
     return str(path)
 
@@ -52,8 +51,9 @@ def run():
     args = parse_args()
     detector = Detector(args.model, args.threshold)
     cooldown_tracker = {}
+    captures_dir = Path(args.captures_dir)
 
-    recorder = Recorder(timeout=args.record_timeout, fps=1.0 / args.interval)
+    recorder = Recorder(timeout=args.record_timeout, fps=1.0 / args.interval, captures_dir=captures_dir)
 
     stream = None
     if args.stream:
@@ -86,7 +86,7 @@ def run():
                     draw_detections(frame, detections)
                     recorder.detection()
                     if args.save or args.ntfy:
-                        frame_path = save_frame(frame)
+                        frame_path = save_frame(frame, captures_dir)
                     send_notification(
                         detections,
                         frame_path=frame_path,
