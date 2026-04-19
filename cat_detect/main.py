@@ -8,6 +8,7 @@ import cv2
 from cat_detect.camera import Camera
 from cat_detect.detector import Detector
 from cat_detect.notify import send_notification
+from cat_detect.recorder import Recorder
 from cat_detect.stream import start_stream
 
 CAPTURES_DIR = Path("captures")
@@ -26,6 +27,8 @@ def parse_args():
     p.add_argument("--flip", action="store_true", help="Rotate camera image 180°")
     p.add_argument("--stream", action="store_true", help="Serve MJPEG video stream over HTTP")
     p.add_argument("--stream-port", type=int, default=8085, help="Port for MJPEG stream (default: 8085)")
+    p.add_argument("--record-timeout", type=float, default=20.0,
+                   help="Seconds of no detections before stopping video recording (default: 20)")
     return p.parse_args()
 
 
@@ -50,6 +53,8 @@ def run():
     detector = Detector(args.model, args.threshold)
     cooldown_tracker = {}
 
+    recorder = Recorder(timeout=args.record_timeout, fps=1.0 / args.interval)
+
     stream = None
     if args.stream:
         stream = start_stream(args.stream_port)
@@ -59,45 +64,52 @@ def run():
         print(f"MJPEG stream → http://0.0.0.0:{args.stream_port}/")
     if args.ntfy:
         print(f"Notifications → ntfy.sh/{args.ntfy} (cooldown={args.cooldown}s)")
+    print(f"Video recording enabled (timeout={args.record_timeout}s)")
     print("Press Ctrl+C to stop.\n")
 
     with Camera(args.camera) as cam:
-        while True:
-            frame = cam.read_frame()
-            if frame is None:
-                print("Warning: failed to grab frame, retrying...")
-                time.sleep(0.5)
-                continue
+        try:
+            while True:
+                frame = cam.read_frame()
+                if frame is None:
+                    print("Warning: failed to grab frame, retrying...")
+                    time.sleep(0.5)
+                    continue
 
-            if args.flip:
-                frame = cv2.flip(frame, -1)
+                if args.flip:
+                    frame = cv2.flip(frame, -1)
 
-            detections = detector.detect(frame)
+                detections = detector.detect(frame)
 
-            frame_path = None
-            if detections:
-                draw_detections(frame, detections)
-                if args.save or args.ntfy:
-                    frame_path = save_frame(frame)
-                send_notification(
-                    detections,
-                    frame_path=frame_path,
-                    ntfy_topic=args.ntfy,
-                    cooldown_tracker=cooldown_tracker,
-                    cooldown_seconds=args.cooldown,
-                )
-
-            if stream:
-                stream.set_frame(frame)
-
-            if args.show:
-                if not detections:
+                frame_path = None
+                if detections:
                     draw_detections(frame, detections)
-                cv2.imshow("Wildlife Detector", frame)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                    recorder.detection()
+                    if args.save or args.ntfy:
+                        frame_path = save_frame(frame)
+                    send_notification(
+                        detections,
+                        frame_path=frame_path,
+                        ntfy_topic=args.ntfy,
+                        cooldown_tracker=cooldown_tracker,
+                        cooldown_seconds=args.cooldown,
+                    )
 
-            time.sleep(args.interval)
+                recorder.write_frame(frame)
+
+                if stream:
+                    stream.set_frame(frame)
+
+                if args.show:
+                    if not detections:
+                        draw_detections(frame, detections)
+                    cv2.imshow("Wildlife Detector", frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+
+                time.sleep(args.interval)
+        finally:
+            recorder.close()
 
     if args.show:
         cv2.destroyAllWindows()
