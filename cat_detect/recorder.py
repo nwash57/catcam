@@ -29,6 +29,8 @@ class Recorder:
         self._snapshot_count = 0
         self._species: set[str] = set()
         self._trigger_file: str | None = None
+        self._writer_started_at: float | None = None
+        self._frames_written = 0
 
     @property
     def recording(self) -> bool:
@@ -66,6 +68,7 @@ class Recorder:
             if not self._writer:
                 self._start_writer(frame)
             self._writer.write(frame)
+            self._frames_written += 1
         else:
             if self._writer or self._event_dir:
                 self._end_event()
@@ -94,6 +97,8 @@ class Recorder:
         h, w = frame.shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         self._writer = cv2.VideoWriter(str(self._raw_path), fourcc, self.fps, (w, h))
+        self._writer_started_at = time.monotonic()
+        self._frames_written = 0
         print(f"  Recording started → {self._raw_path}")
 
     def _end_event(self):
@@ -102,9 +107,10 @@ class Recorder:
         final_video: Path | None = None
         if self._writer:
             self._writer.release()
-            final_video = self._finalize_video()
+            measured_fps = self._measured_fps()
+            final_video = self._finalize_video(measured_fps)
             if final_video is not None:
-                print(f"  Recording saved → {final_video}")
+                print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
 
         if self._event_dir is not None and self._event_started_at is not None:
             summary = {
@@ -121,6 +127,8 @@ class Recorder:
         self._writer = None
         self._video_path = None
         self._raw_path = None
+        self._writer_started_at = None
+        self._frames_written = 0
         self._last_detection = None
         self._event_dir = None
         self._event_started_at = None
@@ -128,9 +136,20 @@ class Recorder:
         self._species = set()
         self._trigger_file = None
 
-    def _finalize_video(self) -> Path | None:
-        """Transcode the raw mp4v recording to browser-friendly H.264. Returns
-        the final video path, or None if the raw file is missing."""
+    def _measured_fps(self) -> float:
+        """Actual frame rate written to the raw file. Falls back to declared fps
+        if we don't have enough data to measure."""
+        if self._writer_started_at is None or self._frames_written < 2:
+            return self.fps
+        elapsed = time.monotonic() - self._writer_started_at
+        if elapsed <= 0:
+            return self.fps
+        return self._frames_written / elapsed
+
+    def _finalize_video(self, measured_fps: float) -> Path | None:
+        """Transcode the raw mp4v recording to browser-friendly H.264, retagging
+        the framerate to the measured rate so playback matches wall-clock time.
+        Returns the final video path, or None if the raw file is missing."""
         if self._raw_path is None or self._video_path is None or not self._raw_path.exists():
             return None
 
@@ -144,6 +163,7 @@ class Recorder:
             subprocess.run(
                 [
                     ffmpeg, "-y", "-loglevel", "error",
+                    "-r", f"{measured_fps:.3f}",
                     "-i", str(self._raw_path),
                     "-c:v", "libx264",
                     "-preset", "veryfast",

@@ -81,6 +81,9 @@ support video attachments well.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--camera` | `0` | Camera device index |
+| `--width` | `1920` | Capture width in pixels |
+| `--height` | `1080` | Capture height in pixels |
+| `--mjpg` / `--no-mjpg` | on | Request MJPEG from camera (much higher fps at 1080p; disable for raw YUYV) |
 | `--model` | `yolov8n.pt` | YOLO model name |
 | `--threshold` | `0.35` | Minimum detection confidence (0-1) |
 | `--fps` | `15` | Video framerate / main loop rate |
