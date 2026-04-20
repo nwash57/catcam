@@ -16,6 +16,10 @@ from cat_detect.stream import start_stream
 def parse_args():
     p = argparse.ArgumentParser(description="Wildlife detector — USB camera + YOLOv8")
     p.add_argument("--camera", type=int, default=0, help="Camera device index (default: 0)")
+    p.add_argument("--width", type=int, default=1920, help="Capture width in pixels (default: 1920)")
+    p.add_argument("--height", type=int, default=1080, help="Capture height in pixels (default: 1080)")
+    p.add_argument("--mjpg", action=argparse.BooleanOptionalAction, default=True,
+                   help="Request MJPEG from the camera (default: on; use --no-mjpg to disable)")
     p.add_argument("--model", default="yolov8n.pt", help="YOLO model name (default: yolov8n.pt)")
     p.add_argument("--threshold", type=float, default=0.35, help="Min confidence (0-1)")
     p.add_argument("--fps", type=float, default=15.0,
@@ -83,7 +87,7 @@ def run():
     active_event_dir: Path | None = None
 
     worker.start()
-    with Camera(args.camera) as cam:
+    with Camera(args.camera, width=args.width, height=args.height, mjpg=args.mjpg) as cam:
         try:
             while True:
                 tick_started = time.monotonic()
