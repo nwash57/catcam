@@ -56,7 +56,8 @@
           "builder": "@angular/build:dev-server",
           "options": {
             "host": "0.0.0.0",
-            "allowedHosts": ["catcam.local"]
+            "allowedHosts": ["catcam.local"],
+            "proxyConfig": "proxy.conf.json"
           },
           "configurations": {
             "production": {

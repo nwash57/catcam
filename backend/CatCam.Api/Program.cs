@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -8,7 +10,7 @@ const string AngularDevCors = "AngularDev";
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(AngularDevCors, policy => policy
-        .WithOrigins("http://localhost:4200")
+        .WithOrigins("http://localhost:4200", "http://catcam.local:4200")
         .AllowAnyHeader()
         .AllowAnyMethod());
 });
@@ -25,35 +27,47 @@ if (app.Environment.IsDevelopment())
 }
 
 var contentTypes = new FileExtensionContentTypeProvider();
+var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
-app.MapGet("/api/captures", () =>
+app.MapGet("/api/events", () =>
 {
     if (!Directory.Exists(capturesDir))
-        return Results.Ok(Array.Empty<CaptureDto>());
+        return Results.Ok(Array.Empty<EventSummary>());
 
-    var captures = new DirectoryInfo(capturesDir)
-        .EnumerateFiles()
-        .Where(f => IsMedia(f.Name))
-        .OrderByDescending(f => f.LastWriteTimeUtc)
-        .Select(f => new CaptureDto(
-            f.Name,
-            IsVideo(f.Name) ? "video" : "image",
-            f.LastWriteTimeUtc,
-            f.Length))
+    var events = new DirectoryInfo(capturesDir)
+        .EnumerateDirectories("event_*")
+        .Select(dir => BuildSummary(dir, jsonOptions))
+        .OrderByDescending(e => e.StartedAt)
         .ToArray();
 
-    return Results.Ok(captures);
+    return Results.Ok(events);
 });
 
-app.MapGet("/media/{filename}", (string filename) =>
+app.MapGet("/api/events/{id}", (string id) =>
 {
-    // Prevent path traversal — only allow a bare filename.
-    if (filename.Contains('/') || filename.Contains('\\') || filename.Contains(".."))
+    if (!IsSafeSegment(id)) return Results.BadRequest();
+
+    var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
+    if (!dir.Exists) return Results.NotFound();
+
+    var summary = BuildSummary(dir, jsonOptions);
+    var snapshots = dir.EnumerateFiles("*.jpg")
+        .Concat(dir.EnumerateFiles("*.jpeg"))
+        .Concat(dir.EnumerateFiles("*.png"))
+        .OrderBy(f => f.Name)
+        .Select(f => new MediaFile(f.Name, f.Length))
+        .ToArray();
+
+    return Results.Ok(new EventDetail(summary, snapshots));
+});
+
+app.MapGet("/media/{eventId}/{filename}", (string eventId, string filename) =>
+{
+    if (!IsSafeSegment(eventId) || !IsSafeSegment(filename))
         return Results.BadRequest();
 
-    var path = Path.Combine(capturesDir, filename);
-    if (!File.Exists(path))
-        return Results.NotFound();
+    var path = Path.Combine(capturesDir, eventId, filename);
+    if (!File.Exists(path)) return Results.NotFound();
 
     if (!contentTypes.TryGetContentType(path, out var contentType))
         contentType = "application/octet-stream";
@@ -73,12 +87,90 @@ static string ResolveCapturesDirectory(WebApplication app)
         : Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, configured));
 }
 
-static bool IsMedia(string name) => IsImage(name) || IsVideo(name);
-static bool IsImage(string name) => name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
-    || name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
-    || name.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
-static bool IsVideo(string name) => name.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
-    || name.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
-    || name.EndsWith(".mov", StringComparison.OrdinalIgnoreCase);
+static bool IsSafeSegment(string s) =>
+    !string.IsNullOrEmpty(s)
+    && !s.Contains('/') && !s.Contains('\\') && !s.Contains("..");
 
-record CaptureDto(string Name, string Type, DateTime CapturedAt, long SizeBytes);
+static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
+{
+    var jsonPath = Path.Combine(dir.FullName, "event.json");
+    if (File.Exists(jsonPath))
+    {
+        try
+        {
+            var sidecar = JsonSerializer.Deserialize<EventSidecar>(File.ReadAllText(jsonPath), json);
+            if (sidecar is not null)
+            {
+                return new EventSummary(
+                    Id: sidecar.Id ?? dir.Name,
+                    StartedAt: sidecar.StartedAt ?? dir.CreationTimeUtc,
+                    EndedAt: sidecar.EndedAt,
+                    SnapshotCount: sidecar.SnapshotCount ?? CountSnapshots(dir),
+                    HasVideo: !string.IsNullOrEmpty(sidecar.VideoFile),
+                    VideoFile: sidecar.VideoFile,
+                    TriggerFile: sidecar.TriggerFile ?? FirstSnapshot(dir),
+                    Species: (IReadOnlyList<string>?)sidecar.Species ?? Array.Empty<string>(),
+                    InProgress: sidecar.EndedAt is null);
+            }
+        }
+        catch
+        {
+            // Fall through to filesystem inference.
+        }
+    }
+
+    return InferSummary(dir);
+}
+
+static EventSummary InferSummary(DirectoryInfo dir)
+{
+    var videoFile = dir.EnumerateFiles("*.mp4").FirstOrDefault();
+    return new EventSummary(
+        Id: dir.Name,
+        StartedAt: dir.CreationTimeUtc,
+        EndedAt: null,
+        SnapshotCount: CountSnapshots(dir),
+        HasVideo: videoFile is not null,
+        VideoFile: videoFile?.Name,
+        TriggerFile: FirstSnapshot(dir),
+        Species: Array.Empty<string>(),
+        InProgress: true);
+}
+
+static int CountSnapshots(DirectoryInfo dir) =>
+    dir.EnumerateFiles("*.jpg").Count()
+    + dir.EnumerateFiles("*.jpeg").Count()
+    + dir.EnumerateFiles("*.png").Count();
+
+static string? FirstSnapshot(DirectoryInfo dir) =>
+    dir.EnumerateFiles("*.jpg")
+        .Concat(dir.EnumerateFiles("*.jpeg"))
+        .Concat(dir.EnumerateFiles("*.png"))
+        .OrderBy(f => f.Name)
+        .FirstOrDefault()?.Name;
+
+record EventSummary(
+    string Id,
+    DateTimeOffset StartedAt,
+    DateTimeOffset? EndedAt,
+    int SnapshotCount,
+    bool HasVideo,
+    string? VideoFile,
+    string? TriggerFile,
+    IReadOnlyList<string> Species,
+    bool InProgress);
+
+record MediaFile(string Name, long SizeBytes);
+
+record EventDetail(EventSummary Summary, IReadOnlyList<MediaFile> Snapshots);
+
+class EventSidecar
+{
+    [JsonPropertyName("id")] public string? Id { get; set; }
+    [JsonPropertyName("startedAt")] public DateTimeOffset? StartedAt { get; set; }
+    [JsonPropertyName("endedAt")] public DateTimeOffset? EndedAt { get; set; }
+    [JsonPropertyName("snapshotCount")] public int? SnapshotCount { get; set; }
+    [JsonPropertyName("videoFile")] public string? VideoFile { get; set; }
+    [JsonPropertyName("triggerFile")] public string? TriggerFile { get; set; }
+    [JsonPropertyName("species")] public List<string>? Species { get; set; }
+}
