@@ -38,12 +38,28 @@ python -m cat_detect.main --stream --stream-port 8080
 # Flip camera 180° (useful for upside-down mounts)
 python -m cat_detect.main --flip
 
-# Adjust confidence threshold and detection interval
-python -m cat_detect.main --threshold 0.5 --interval 2.0
+# Adjust confidence threshold and video framerate
+python -m cat_detect.main --threshold 0.5 --fps 20
+
+# Run detection less often to save CPU; snap every 3s during an event
+python -m cat_detect.main --detect-interval 2.0 --snapshot-interval 3.0
 
 # Use a different camera and captures directory
 python -m cat_detect.main --camera 1 --captures-dir /mnt/storage/wildlife
 ```
+
+## How it works
+
+Frame capture, YOLO detection, and video recording run on decoupled cadences:
+
+- **`--fps`** paces the main loop and video recording. Drop it for choppier but
+  cheaper video; raise it for smoother playback.
+- **`--detect-interval`** caps how often YOLO runs on a background thread. The
+  worker grabs the newest frame each tick, so slow inference never stalls the
+  video loop. Detection bboxes are cached between runs and redrawn on every
+  frame so they don't flicker.
+- **`--snapshot-interval`** throttles snapshot saves during an active event. The
+  first detection of an event always saves a trigger snapshot regardless.
 
 ## Video recording
 
@@ -51,6 +67,11 @@ Video recording is always active. When wildlife is detected, catcam begins
 writing frames to an MP4 file and continues recording until there are no
 detections for 20 seconds (configurable with `--record-timeout`). Videos are
 saved alongside snapshots in the captures directory.
+
+Recordings are written with OpenCV's `mp4v` codec and transcoded to H.264
+(`libx264`, yuv420p, faststart) via ffmpeg on event close so they play in
+browsers. Install ffmpeg on the host (`sudo apt install ffmpeg`) — without it,
+catcam falls back to raw mp4v which browsers can't play.
 
 Snapshots (JPEGs) are still used for ntfy notifications since ntfy doesn't
 support video attachments well.
@@ -62,7 +83,9 @@ support video attachments well.
 | `--camera` | `0` | Camera device index |
 | `--model` | `yolov8n.pt` | YOLO model name |
 | `--threshold` | `0.35` | Minimum detection confidence (0-1) |
-| `--interval` | `1.0` | Seconds between detection runs |
+| `--fps` | `15` | Video framerate / main loop rate |
+| `--detect-interval` | `1.0` | Min seconds between YOLO detection runs |
+| `--snapshot-interval` | `2.0` | Min seconds between snapshots during an event |
 | `--show` | off | Show live preview window |
 | `--save` | off | Save snapshot JPEGs on detection |
 | `--ntfy` | off | ntfy.sh topic for push notifications |
@@ -118,12 +141,13 @@ journalctl -u catcam -f
 
 ```
 cat_detect/
-  main.py       — Entry point and main loop
-  camera.py     — USB camera capture (OpenCV)
-  detector.py   — YOLOv8 inference + wildlife filtering
-  notify.py     — Push notifications via ntfy.sh
-  recorder.py   — Video recording triggered by detections
-  stream.py     — MJPEG HTTP server for live viewing
+  main.py          — Entry point and main loop
+  camera.py        — USB camera capture (OpenCV)
+  detector.py      — YOLOv8 inference + wildlife filtering
+  detect_worker.py — Background thread running detection against latest frame
+  notify.py        — Push notifications via ntfy.sh
+  recorder.py      — Video recording triggered by detections
+  stream.py        — MJPEG HTTP server for live viewing
 ```
 
 ## Detected species
