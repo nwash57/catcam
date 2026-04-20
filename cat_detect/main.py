@@ -39,12 +39,13 @@ def draw_detections(frame, detections):
         cv2.putText(frame, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
 
-def save_frame(frame, captures_dir):
-    captures_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = captures_dir / f"detection_{ts}.jpg"
+def save_frame(frame, event_dir):
+    event_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    filename = f"snapshot_{ts}.jpg"
+    path = event_dir / filename
     cv2.imwrite(str(path), frame)
-    return str(path)
+    return path, filename
 
 
 def run():
@@ -84,9 +85,12 @@ def run():
                 frame_path = None
                 if detections:
                     draw_detections(frame, detections)
-                    recorder.detection()
-                    if args.save or args.ntfy:
-                        frame_path = save_frame(frame, captures_dir)
+                    species = [d["label"] for d in detections]
+                    recorder.detection(species=species)
+                    if (args.save or args.ntfy) and recorder.event_dir is not None:
+                        saved_path, saved_name = save_frame(frame, recorder.event_dir)
+                        recorder.note_snapshot(saved_name)
+                        frame_path = str(saved_path)
                     send_notification(
                         detections,
                         frame_path=frame_path,

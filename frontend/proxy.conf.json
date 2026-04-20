@@ -1,0 +1,12 @@
+{
+  "/api": {
+    "target": "http://localhost:5077",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/media": {
+    "target": "http://localhost:5077",
+    "secure": false,
+    "changeOrigin": true
+  }
+}
