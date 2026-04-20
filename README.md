@@ -73,6 +73,47 @@ support video attachments well.
 | `--record-timeout` | `20` | Seconds of quiet before stopping a recording |
 | `--captures-dir` | `captures` | Directory for snapshots and recordings |
 
+## Running as a service
+
+To run catcam automatically on boot (e.g. on a Raspberry Pi):
+
+```bash
+sudo nano /etc/systemd/system/catcam.service
+```
+
+```ini
+[Unit]
+Description=Catcam wildlife detector
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/catcam
+ExecStart=/home/pi/catcam/.venv/bin/python -m cat_detect.main --save --ntfy my-topic --flip --captures-dir /mnt/share/catcam
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Adjust `User`, `WorkingDirectory`, `ExecStart`, and flags to match your setup.
+Then enable and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable catcam
+sudo systemctl start catcam
+```
+
+Check status and logs:
+
+```bash
+sudo systemctl status catcam
+journalctl -u catcam -f
+```
+
 ## Project structure
 
 ```

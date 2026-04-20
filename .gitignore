@@ -1,2 +1,19 @@
 **/__pycache__/*
 captures/*
+
+# IDE
+.idea/
+.vs/
+.vscode/
+.claude/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+
+# Node / Angular
+node_modules/
+dist/
+.angular/
