@@ -31,18 +31,29 @@ if (app.Environment.IsDevelopment())
 var contentTypes = new FileExtensionContentTypeProvider();
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
-app.MapGet("/api/events", () =>
+app.MapGet("/api/events", (int? skip, int? take) =>
 {
-    if (!Directory.Exists(capturesDir))
-        return Results.Ok(Array.Empty<EventSummary>());
+    var skipN = Math.Max(0, skip ?? 0);
+    var takeN = Math.Clamp(take ?? 48, 1, 200);
 
-    var events = new DirectoryInfo(capturesDir)
+    if (!Directory.Exists(capturesDir))
+        return Results.Ok(new EventPage(Array.Empty<EventSummary>(), 0));
+
+    // Directory names are `event_YYYYMMDD_HHMMSS`, so ordinal desc sort == newest first.
+    // Sort before reading sidecars so we only parse event.json for the current page.
+    var dirs = new DirectoryInfo(capturesDir)
         .EnumerateDirectories("event_*")
+        .OrderByDescending(d => d.Name, StringComparer.Ordinal)
+        .ToArray();
+
+    var items = dirs
+        .Skip(skipN)
+        .Take(takeN)
         .Select(dir => BuildSummary(dir, jsonOptions))
         .OrderByDescending(e => e.StartedAt)
         .ToArray();
 
-    return Results.Ok(events);
+    return Results.Ok(new EventPage(items, dirs.Length));
 });
 
 app.MapGet("/api/events/{id}", (string id) =>
@@ -167,6 +178,8 @@ record EventSummary(
 record MediaFile(string Name, long SizeBytes);
 
 record EventDetail(EventSummary Summary, IReadOnlyList<MediaFile> Snapshots);
+
+record EventPage(IReadOnlyList<EventSummary> Items, int Total);
 
 class EventSidecar
 {

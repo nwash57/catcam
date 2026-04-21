@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
@@ -22,6 +22,11 @@ export interface MediaFile {
 export interface EventDetail {
   summary: EventSummary;
   snapshots: MediaFile[];
+}
+
+export interface EventPage {
+  items: EventSummary[];
+  total: number;
 }
 
 export interface LoadAverage {
@@ -67,8 +72,9 @@ export interface DeviceMetrics {
 export class CatcamApi {
   private http = inject(HttpClient);
 
-  listEvents(): Observable<EventSummary[]> {
-    return this.http.get<EventSummary[]>('/api/events');
+  listEvents(skip = 0, take = 48): Observable<EventPage> {
+    const params = new HttpParams().set('skip', skip).set('take', take);
+    return this.http.get<EventPage>('/api/events', { params });
   }
 
   getEvent(id: string): Observable<EventDetail> {
