@@ -24,6 +24,45 @@ export interface EventDetail {
   snapshots: MediaFile[];
 }
 
+export interface LoadAverage {
+  oneMinute: number;
+  fiveMinute: number;
+  fifteenMinute: number;
+}
+
+export interface MemoryInfo {
+  totalBytes: number;
+  availableBytes: number;
+  usedBytes: number;
+}
+
+export interface DiskInfo {
+  mount: string;
+  totalBytes: number;
+  freeBytes: number;
+  usedBytes: number;
+}
+
+export interface ThrottledInfo {
+  underVoltageNow: boolean;
+  throttledNow: boolean;
+  underVoltageEver: boolean;
+  throttledEver: boolean;
+}
+
+export interface DeviceMetrics {
+  hostname: string;
+  os: string;
+  uptimeSeconds: number | null;
+  cpuTemperatureC: number | null;
+  cpuUsagePercent: number | null;
+  cpuFrequencyMhz: number | null;
+  loadAverage: LoadAverage | null;
+  memory: MemoryInfo | null;
+  disk: DiskInfo | null;
+  throttled: ThrottledInfo | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class CatcamApi {
   private http = inject(HttpClient);
@@ -38,5 +77,9 @@ export class CatcamApi {
 
   mediaUrl(eventId: string, filename: string): string {
     return `/media/${encodeURIComponent(eventId)}/${encodeURIComponent(filename)}`;
+  }
+
+  getMetrics(): Observable<DeviceMetrics> {
+    return this.http.get<DeviceMetrics>('/api/metrics');
   }
 }

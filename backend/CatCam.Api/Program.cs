@@ -1,10 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using CatCam.Api;
 using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services.AddSingleton<MetricsReader>();
 
 const string AngularDevCors = "AngularDev";
 builder.Services.AddCors(options =>
@@ -74,6 +76,8 @@ app.MapGet("/media/{eventId}/{filename}", (string eventId, string filename) =>
 
     return Results.File(path, contentType, enableRangeProcessing: true);
 });
+
+app.MapGet("/api/metrics", (MetricsReader reader) => Results.Ok(reader.Read(capturesDir)));
 
 app.Run();
 
