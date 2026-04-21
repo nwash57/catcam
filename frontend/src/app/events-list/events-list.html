@@ -1,7 +1,7 @@
-<div class="flex flex-wrap items-center gap-3 mb-6">
+<div class="flex flex-wrap items-center gap-3 mb-4">
   <input
     type="text"
-    placeholder="Search species or id…"
+    placeholder="Search this page…"
     class="flex-1 min-w-48 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
     [value]="query()"
     (input)="onQueryInput($event)" />
@@ -13,9 +13,45 @@
   </button>
 </div>
 
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4 text-sm text-slate-600">
+  <div class="tabular-nums">
+    @if (loading()) {
+      Loading…
+    } @else if (total() === 0) {
+      No captures yet
+    } @else {
+      {{ rangeStart() }}–{{ rangeEnd() }} of {{ total() }}
+    }
+  </div>
+  <div class="flex items-center gap-2">
+    <button
+      type="button"
+      class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+      [disabled]="!hasPrev() || loading()"
+      (click)="prev()">
+      ← Prev
+    </button>
+    <button
+      type="button"
+      class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+      [disabled]="!hasNext() || loading()"
+      (click)="next()">
+      Next →
+    </button>
+  </div>
+</div>
+
+@if (error()) {
+  <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 mb-4">
+    Could not load events.
+  </div>
+}
+
 @if (filtered().length === 0) {
   <div class="rounded-lg border border-dashed border-slate-300 p-12 text-center text-slate-500">
-    No captures yet.
+    @if (loading()) { Loading captures… }
+    @else if (total() === 0) { No captures yet. }
+    @else { No matches on this page. }
   </div>
 } @else {
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -59,5 +95,25 @@
         </div>
       </a>
     }
+  </div>
+
+  <div class="mt-6 flex items-center justify-between gap-3 text-sm text-slate-600">
+    <div class="tabular-nums">{{ rangeStart() }}–{{ rangeEnd() }} of {{ total() }}</div>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+        [disabled]="!hasPrev() || loading()"
+        (click)="prev()">
+        ← Prev
+      </button>
+      <button
+        type="button"
+        class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"
+        [disabled]="!hasNext() || loading()"
+        (click)="next()">
+        Next →
+      </button>
+    </div>
   </div>
 }
