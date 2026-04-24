@@ -1,12 +1,17 @@
 # Server-side stack — run this on the box with the captures drive, not on the Pi.
 # The Pi runs cat_detect directly: python -m cat_detect.main [options]
 #
-# Quick start:
+# Profiles:
+#   (none / default)  api + auto-label          — dev mode, run frontend with: cd frontend && pnpm start
+#   full              api + auto-label + frontend — production / self-contained
+#
+# Quick start (dev):
 #   cp .env.example .env   # edit to taste
 #   docker compose up -d
+#   cd frontend && pnpm start
 #
-# To skip the GPU auto-label service (no Nvidia GPU or nvidia-container-toolkit):
-#   docker compose up -d api frontend
+# Full stack (no local Node):
+#   docker compose --profile full up -d
 
 services:
   api:
@@ -20,21 +25,13 @@ services:
       AutoLabel__Url: ${AUTOLABEL_URL:-http://auto-label:8090}
     volumes:
       - ${CAPTURES_DIR:-./captures}:/captures
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./frontend
     ports:
-      - "${PORT:-4200}:80"
-    depends_on:
-      - api
+      - "${API_PORT:-5077}:8080"
     restart: unless-stopped
 
   # GPU service — pre-draws bounding boxes for the annotation UI.
   # Requires nvidia-container-toolkit: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
   # On first start, downloads yolov8x-worldv2.pt (~137 MB) into ./models/ and keeps it there.
-  # Skip with: docker compose up -d api frontend
   auto-label:
     build:
       context: ./auto_label
@@ -49,4 +46,14 @@ services:
       - ./models:/models
     ports:
       - "8090:8090"
+    restart: unless-stopped
+
+  frontend:
+    profiles: [full]
+    build:
+      context: ./frontend
+    ports:
+      - "${PORT:-4200}:80"
+    depends_on:
+      - api
     restart: unless-stopped
