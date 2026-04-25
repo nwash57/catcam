@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<MetricsReader>();
+builder.Services.AddHostedService<TranscodeService>();
 
 const string AngularDevCors = "AngularDev";
 builder.Services.AddCors(options =>
@@ -89,6 +90,12 @@ app.MapGet("/media/{eventId}/{filename}", (string eventId, string filename) =>
 });
 
 app.MapGet("/api/metrics", (MetricsReader reader) => Results.Ok(reader.Read(capturesDir)));
+
+app.MapGet("/api/stream", (IConfiguration config) =>
+{
+    var url = config["Stream:Url"];
+    return Results.Ok(new StreamConfig(string.IsNullOrWhiteSpace(url) ? null : url));
+});
 
 app.Run();
 
@@ -181,13 +188,4 @@ record EventDetail(EventSummary Summary, IReadOnlyList<MediaFile> Snapshots);
 
 record EventPage(IReadOnlyList<EventSummary> Items, int Total);
 
-class EventSidecar
-{
-    [JsonPropertyName("id")] public string? Id { get; set; }
-    [JsonPropertyName("startedAt")] public DateTimeOffset? StartedAt { get; set; }
-    [JsonPropertyName("endedAt")] public DateTimeOffset? EndedAt { get; set; }
-    [JsonPropertyName("snapshotCount")] public int? SnapshotCount { get; set; }
-    [JsonPropertyName("videoFile")] public string? VideoFile { get; set; }
-    [JsonPropertyName("triggerFile")] public string? TriggerFile { get; set; }
-    [JsonPropertyName("species")] public List<string>? Species { get; set; }
-}
+record StreamConfig(string? Url);
