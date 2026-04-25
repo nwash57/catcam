@@ -29,6 +29,10 @@ export interface EventPage {
   total: number;
 }
 
+export interface StreamConfig {
+  url: string | null;
+}
+
 export interface LoadAverage {
   oneMinute: number;
   fiveMinute: number;
@@ -83,6 +87,10 @@ export class CatcamApi {
 
   mediaUrl(eventId: string, filename: string): string {
     return `/media/${encodeURIComponent(eventId)}/${encodeURIComponent(filename)}`;
+  }
+
+  getStreamConfig(): Observable<StreamConfig> {
+    return this.http.get<StreamConfig>('/api/stream');
   }
 
   getMetrics(): Observable<DeviceMetrics> {

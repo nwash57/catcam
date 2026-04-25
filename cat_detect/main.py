@@ -39,6 +39,8 @@ def parse_args():
                    help="Seconds of no detections before stopping video recording (default: 20)")
     p.add_argument("--captures-dir", type=str, default="captures",
                    help="Directory to save snapshots and recordings (default: captures)")
+    p.add_argument("--no-transcode", action="store_true",
+                   help="Skip local ffmpeg transcode; leave recording-raw.mp4 for the backend to process")
     return p.parse_args()
 
 
@@ -65,7 +67,8 @@ def run():
     cooldown_tracker = {}
     captures_dir = Path(args.captures_dir)
 
-    recorder = Recorder(timeout=args.record_timeout, fps=args.fps, captures_dir=captures_dir)
+    recorder = Recorder(timeout=args.record_timeout, fps=args.fps, captures_dir=captures_dir,
+                        no_transcode=args.no_transcode)
     worker = DetectWorker(detector, detect_interval=args.detect_interval)
 
     stream = None

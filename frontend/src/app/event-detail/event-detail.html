@@ -7,8 +7,18 @@
 @if (d) {
   <div class="grid lg:grid-cols-[1fr_280px] gap-6">
     <div>
-      @if (videoUrl(); as url) {
+      @if (liveUrl(); as url) {
+        <div class="relative">
+          <img [src]="url" class="w-full rounded-xl bg-black aspect-video object-contain" alt="Live feed" />
+          <span class="absolute top-3 left-3 rounded-md bg-red-600 text-white text-[10px] font-medium uppercase tracking-wide px-2 py-1 animate-pulse">live</span>
+        </div>
+      } @else if (videoUrl(); as url) {
         <video [src]="url" controls class="w-full rounded-xl bg-black aspect-video"></video>
+      } @else if (d.summary.inProgress) {
+        <div class="aspect-video rounded-xl bg-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
+          <span>Video processing…</span>
+          <span class="text-xs">will appear here when ready</span>
+        </div>
       } @else {
         <div class="aspect-video rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
           no recording

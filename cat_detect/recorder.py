@@ -17,10 +17,12 @@ class Recorder:
     `event.json` summary for a single event live together in one folder.
     """
 
-    def __init__(self, timeout: float = 20.0, fps: float = 10.0, captures_dir: Path | None = None):
+    def __init__(self, timeout: float = 20.0, fps: float = 10.0, captures_dir: Path | None = None,
+                 no_transcode: bool = False):
         self.timeout = timeout
         self.fps = fps
         self.captures_dir = captures_dir or Path("captures")
+        self.no_transcode = no_transcode
         self._writer = None
         self._last_detection = None
         self._event_dir: Path | None = None
@@ -94,8 +96,6 @@ class Recorder:
 
     def _start_writer(self, frame):
         assert self._event_dir is not None
-        # Write with mp4v (MPEG-4 Part 2) for reliable OpenCV support, then
-        # transcode to H.264 on close so browsers can play the file.
         self._raw_path = self._event_dir / "recording-raw.mp4"
         self._video_path = self._event_dir / "recording.mp4"
         h, w = frame.shape[:2]
@@ -113,6 +113,7 @@ class Recorder:
         writer = self._writer
         raw_path = self._raw_path
         video_path = self._video_path
+        no_transcode = self.no_transcode
         measured_fps = self._measured_fps()
         event_dir = self._event_dir
         event_started_at = self._event_started_at
@@ -134,21 +135,25 @@ class Recorder:
 
         t = threading.Thread(
             target=self._finalize_event,
-            args=(writer, raw_path, video_path, measured_fps,
+            args=(writer, raw_path, video_path, no_transcode, measured_fps,
                   event_dir, event_started_at, snapshot_count, species, trigger_file, ended_at),
             daemon=True,
         )
         self._finalize_threads.append(t)
         t.start()
 
-    def _finalize_event(self, writer, raw_path, video_path, measured_fps,
+    def _finalize_event(self, writer, raw_path, video_path, no_transcode, measured_fps,
                         event_dir, event_started_at, snapshot_count, species, trigger_file, ended_at):
         final_video: Path | None = None
         if writer:
             writer.release()
-            final_video = self._finalize_video(raw_path, video_path, measured_fps)
-            if final_video is not None:
-                print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
+            if no_transcode:
+                # Leave recording-raw.mp4 in place; the backend will transcode it.
+                print(f"  Recording written → {raw_path} (measured {measured_fps:.1f}fps, pending backend transcode)")
+            else:
+                final_video = self._finalize_video(raw_path, video_path, measured_fps)
+                if final_video is not None:
+                    print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
 
         if event_dir is not None and event_started_at is not None:
             summary = {
@@ -159,6 +164,7 @@ class Recorder:
                 "videoFile": final_video.name if final_video else None,
                 "triggerFile": trigger_file,
                 "species": sorted(species),
+                "measuredFps": round(measured_fps, 3),
             }
             (event_dir / "event.json").write_text(json.dumps(summary, indent=2))
 
