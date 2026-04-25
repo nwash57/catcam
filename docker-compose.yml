@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: CatCam.Api/Dockerfile
+    environment:
+      Captures__Directory: /captures
+      Stream__Url: ${STREAM_URL:-}
+    volumes:
+      - ${CAPTURES_DIR:-./captures}:/captures
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "${PORT:-80}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
