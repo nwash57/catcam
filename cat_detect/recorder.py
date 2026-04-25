@@ -2,6 +2,7 @@ import datetime
 import json
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +32,7 @@ class Recorder:
         self._trigger_file: str | None = None
         self._writer_started_at: float | None = None
         self._frames_written = 0
+        self._finalize_threads: list[threading.Thread] = []
 
     @property
     def recording(self) -> bool:
@@ -74,9 +76,11 @@ class Recorder:
                 self._end_event()
 
     def close(self):
-        """Flush and close any in-progress event."""
+        """Flush and close any in-progress event, then wait for background finalization."""
         if self._writer or self._event_dir:
             self._end_event()
+        for t in self._finalize_threads:
+            t.join()
 
     def _start_event(self):
         started_at = datetime.datetime.now()
@@ -104,25 +108,17 @@ class Recorder:
     def _end_event(self):
         ended_at = datetime.datetime.now()
 
-        final_video: Path | None = None
-        if self._writer:
-            self._writer.release()
-            measured_fps = self._measured_fps()
-            final_video = self._finalize_video(measured_fps)
-            if final_video is not None:
-                print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
-
-        if self._event_dir is not None and self._event_started_at is not None:
-            summary = {
-                "id": self._event_dir.name,
-                "startedAt": self._event_started_at.astimezone().isoformat(timespec="seconds"),
-                "endedAt": ended_at.astimezone().isoformat(timespec="seconds"),
-                "snapshotCount": self._snapshot_count,
-                "videoFile": final_video.name if final_video else None,
-                "triggerFile": self._trigger_file,
-                "species": sorted(self._species),
-            }
-            (self._event_dir / "event.json").write_text(json.dumps(summary, indent=2))
+        # Snapshot all state needed for finalization before clearing it so the
+        # main loop can continue immediately while the background thread works.
+        writer = self._writer
+        raw_path = self._raw_path
+        video_path = self._video_path
+        measured_fps = self._measured_fps()
+        event_dir = self._event_dir
+        event_started_at = self._event_started_at
+        snapshot_count = self._snapshot_count
+        species = self._species.copy()
+        trigger_file = self._trigger_file
 
         self._writer = None
         self._video_path = None
@@ -136,6 +132,36 @@ class Recorder:
         self._species = set()
         self._trigger_file = None
 
+        t = threading.Thread(
+            target=self._finalize_event,
+            args=(writer, raw_path, video_path, measured_fps,
+                  event_dir, event_started_at, snapshot_count, species, trigger_file, ended_at),
+            daemon=True,
+        )
+        self._finalize_threads.append(t)
+        t.start()
+
+    def _finalize_event(self, writer, raw_path, video_path, measured_fps,
+                        event_dir, event_started_at, snapshot_count, species, trigger_file, ended_at):
+        final_video: Path | None = None
+        if writer:
+            writer.release()
+            final_video = self._finalize_video(raw_path, video_path, measured_fps)
+            if final_video is not None:
+                print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
+
+        if event_dir is not None and event_started_at is not None:
+            summary = {
+                "id": event_dir.name,
+                "startedAt": event_started_at.astimezone().isoformat(timespec="seconds"),
+                "endedAt": ended_at.astimezone().isoformat(timespec="seconds"),
+                "snapshotCount": snapshot_count,
+                "videoFile": final_video.name if final_video else None,
+                "triggerFile": trigger_file,
+                "species": sorted(species),
+            }
+            (event_dir / "event.json").write_text(json.dumps(summary, indent=2))
+
     def _measured_fps(self) -> float:
         """Actual frame rate written to the raw file. Falls back to declared fps
         if we don't have enough data to measure."""
@@ -146,39 +172,39 @@ class Recorder:
             return self.fps
         return self._frames_written / elapsed
 
-    def _finalize_video(self, measured_fps: float) -> Path | None:
+    def _finalize_video(self, raw_path: Path | None, video_path: Path | None, measured_fps: float) -> Path | None:
         """Transcode the raw mp4v recording to browser-friendly H.264, retagging
         the framerate to the measured rate so playback matches wall-clock time.
         Returns the final video path, or None if the raw file is missing."""
-        if self._raw_path is None or self._video_path is None or not self._raw_path.exists():
+        if raw_path is None or video_path is None or not raw_path.exists():
             return None
 
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
             print("  Warning: ffmpeg not found; keeping raw mp4v recording (may not play in browsers).")
-            self._raw_path.rename(self._video_path)
-            return self._video_path
+            raw_path.rename(video_path)
+            return video_path
 
         try:
             subprocess.run(
                 [
                     ffmpeg, "-y", "-loglevel", "error",
                     "-r", f"{measured_fps:.3f}",
-                    "-i", str(self._raw_path),
+                    "-i", str(raw_path),
                     "-c:v", "libx264",
                     "-preset", "veryfast",
                     "-crf", "23",
                     "-pix_fmt", "yuv420p",
                     "-movflags", "+faststart",
-                    str(self._video_path),
+                    str(video_path),
                 ],
                 check=True,
             )
-            self._raw_path.unlink(missing_ok=True)
-            return self._video_path
+            raw_path.unlink(missing_ok=True)
+            return video_path
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             print(f"  Warning: ffmpeg transcode failed ({e}); keeping raw mp4v recording.")
-            if self._video_path.exists():
-                self._video_path.unlink()
-            self._raw_path.rename(self._video_path)
-            return self._video_path
+            if video_path.exists():
+                video_path.unlink()
+            raw_path.rename(video_path)
+            return video_path
