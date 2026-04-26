@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 
 namespace CatCam.Api;
 
@@ -7,19 +8,40 @@ public sealed class MetricsReader
     private readonly object _lock = new();
     private CpuSnapshot? _previousCpu;
 
-    public DeviceMetrics Read(string capturesDir)
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
+    private static readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+
+    public async Task<DeviceMetrics> ReadAsync(string capturesDir, string? piMetricsUrl)
     {
+        PiMetrics? pi = null;
+        if (!string.IsNullOrWhiteSpace(piMetricsUrl))
+            pi = await FetchPiMetricsAsync(piMetricsUrl);
+
         return new DeviceMetrics(
-            Hostname: Environment.MachineName,
-            Os: RuntimeInformation(),
-            UptimeSeconds: ReadUptimeSeconds(),
-            CpuTemperatureC: ReadCpuTemperatureC(),
-            CpuUsagePercent: ReadCpuUsagePercent(),
-            CpuFrequencyMhz: ReadCpuFrequencyMhz(),
-            LoadAverage: ReadLoadAverage(),
-            Memory: ReadMemory(),
+            Hostname: pi?.Hostname ?? Environment.MachineName,
+            Os: pi?.Os ?? RuntimeInformation(),
+            UptimeSeconds: pi?.UptimeSeconds ?? ReadUptimeSeconds(),
+            CpuTemperatureC: pi?.CpuTemperatureC ?? ReadCpuTemperatureC(),
+            CpuUsagePercent: pi?.CpuUsagePercent ?? ReadCpuUsagePercent(),
+            CpuFrequencyMhz: pi?.CpuFrequencyMhz ?? ReadCpuFrequencyMhz(),
+            LoadAverage: pi?.LoadAverage ?? ReadLoadAverage(),
+            Memory: pi?.Memory ?? ReadMemory(),
             Disk: ReadDisk(capturesDir),
-            Throttled: ReadThrottled());
+            Throttled: pi?.Throttled ?? ReadThrottled());
+    }
+
+    private static async Task<PiMetrics?> FetchPiMetricsAsync(string piMetricsUrl)
+    {
+        try
+        {
+            var url = piMetricsUrl.TrimEnd('/') + "/metrics";
+            var json = await _http.GetStringAsync(url);
+            return JsonSerializer.Deserialize<PiMetrics>(json, _jsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string RuntimeInformation()
@@ -168,12 +190,7 @@ public sealed class MetricsReader
         }
     }
 
-    private static ThrottledInfo? ReadThrottled()
-    {
-        // Raspberry Pi exposes this via vcgencmd; it's not in sysfs, so skip unless present via a cached file.
-        // Keep hook for future: return null today.
-        return null;
-    }
+    private static ThrottledInfo? ReadThrottled() => null;
 
     private static string? TryReadFirstLine(string path)
     {
@@ -190,6 +207,17 @@ public sealed class MetricsReader
     }
 
     private sealed record CpuSnapshot(long Total, long Idle);
+
+    private sealed record PiMetrics(
+        string? Hostname,
+        string? Os,
+        double? UptimeSeconds,
+        double? CpuTemperatureC,
+        double? CpuUsagePercent,
+        double? CpuFrequencyMhz,
+        LoadAverage? LoadAverage,
+        MemoryInfo? Memory,
+        ThrottledInfo? Throttled);
 }
 
 public record DeviceMetrics(

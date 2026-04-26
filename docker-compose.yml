@@ -6,6 +6,7 @@ services:
     environment:
       Captures__Directory: /captures
       Stream__Url: ${STREAM_URL:-}
+      Pi__MetricsUrl: ${PI_METRICS_URL:-}
     volumes:
       - ${CAPTURES_DIR:-./captures}:/captures
     restart: unless-stopped
