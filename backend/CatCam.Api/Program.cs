@@ -89,7 +89,11 @@ app.MapGet("/media/{eventId}/{filename}", (string eventId, string filename) =>
     return Results.File(path, contentType, enableRangeProcessing: true);
 });
 
-app.MapGet("/api/metrics", (MetricsReader reader) => Results.Ok(reader.Read(capturesDir)));
+app.MapGet("/api/metrics", async (MetricsReader reader, IConfiguration config) =>
+{
+    var piUrl = config["Pi:MetricsUrl"];
+    return Results.Ok(await reader.ReadAsync(capturesDir, piUrl));
+});
 
 app.MapGet("/api/stream", (IConfiguration config) =>
 {
