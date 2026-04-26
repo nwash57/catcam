@@ -127,6 +127,8 @@ static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
             var sidecar = JsonSerializer.Deserialize<EventSidecar>(File.ReadAllText(jsonPath), json);
             if (sidecar is not null)
             {
+                var pendingVideo = string.IsNullOrEmpty(sidecar.VideoFile)
+                    && File.Exists(Path.Combine(dir.FullName, "recording-raw.mp4"));
                 return new EventSummary(
                     Id: sidecar.Id ?? dir.Name,
                     StartedAt: sidecar.StartedAt ?? dir.CreationTimeUtc,
@@ -136,7 +138,8 @@ static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
                     VideoFile: sidecar.VideoFile,
                     TriggerFile: sidecar.TriggerFile ?? FirstSnapshot(dir),
                     Species: (IReadOnlyList<string>?)sidecar.Species ?? Array.Empty<string>(),
-                    InProgress: sidecar.EndedAt is null);
+                    InProgress: sidecar.EndedAt is null,
+                    PendingVideo: pendingVideo);
             }
         }
         catch
@@ -150,7 +153,8 @@ static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
 
 static EventSummary InferSummary(DirectoryInfo dir)
 {
-    var videoFile = dir.EnumerateFiles("*.mp4").FirstOrDefault();
+    var videoFile = dir.EnumerateFiles("recording.mp4").FirstOrDefault();
+    var rawFile = dir.EnumerateFiles("recording-raw.mp4").FirstOrDefault();
     return new EventSummary(
         Id: dir.Name,
         StartedAt: dir.CreationTimeUtc,
@@ -160,7 +164,8 @@ static EventSummary InferSummary(DirectoryInfo dir)
         VideoFile: videoFile?.Name,
         TriggerFile: FirstSnapshot(dir),
         Species: Array.Empty<string>(),
-        InProgress: true);
+        InProgress: true,
+        PendingVideo: videoFile is null && rawFile is not null);
 }
 
 static int CountSnapshots(DirectoryInfo dir) =>
@@ -184,7 +189,8 @@ record EventSummary(
     string? VideoFile,
     string? TriggerFile,
     IReadOnlyList<string> Species,
-    bool InProgress);
+    bool InProgress,
+    bool PendingVideo);
 
 record MediaFile(string Name, long SizeBytes);
 

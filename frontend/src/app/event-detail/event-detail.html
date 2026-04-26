@@ -14,7 +14,7 @@
         </div>
       } @else if (videoUrl(); as url) {
         <video [src]="url" controls class="w-full rounded-xl bg-black aspect-video"></video>
-      } @else if (d.summary.inProgress) {
+      } @else if (d.summary.inProgress || d.summary.pendingVideo) {
         <div class="aspect-video rounded-xl bg-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
           <span>Video processing…</span>
           <span class="text-xs">will appear here when ready</span>

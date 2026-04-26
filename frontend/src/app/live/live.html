@@ -1,0 +1,19 @@
+@let config = streamConfig();
+
+<h2 class="text-lg font-semibold mb-4">Live</h2>
+
+@if (config === null) {
+  <div class="aspect-video rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+    Loading…
+  </div>
+} @else if (config.url) {
+  <img
+    [src]="config.url"
+    alt="Live stream"
+    class="w-full rounded-xl bg-black aspect-video object-contain" />
+} @else {
+  <div class="aspect-video rounded-xl bg-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
+    <span>Stream not configured</span>
+    <span class="text-xs">Set <code class="font-mono">Stream:Url</code> in the backend config</span>
+  </div>
+}

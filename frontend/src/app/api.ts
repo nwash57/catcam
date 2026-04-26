@@ -12,6 +12,7 @@ export interface EventSummary {
   triggerFile: string | null;
   species: string[];
   inProgress: boolean;
+  pendingVideo: boolean;
 }
 
 export interface MediaFile {
