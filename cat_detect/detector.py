@@ -2,16 +2,8 @@ from ultralytics import YOLO
 
 # COCO class IDs that count as "wildlife" — extend as you like
 WILDLIFE_CLASSES = {
-    14: "bird",
     15: "cat",
     16: "dog",
-    17: "horse",
-    18: "sheep",
-    19: "cow",
-    20: "elephant",
-    21: "bear",
-    22: "zebra",
-    23: "giraffe",
 }
 
 
