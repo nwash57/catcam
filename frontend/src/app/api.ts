@@ -30,6 +30,11 @@ export interface EventPage {
   total: number;
 }
 
+export interface EventNeighbors {
+  olderId: string | null;
+  newerId: string | null;
+}
+
 export interface StreamConfig {
   url: string | null;
 }
@@ -84,6 +89,10 @@ export class CatcamApi {
 
   getEvent(id: string): Observable<EventDetail> {
     return this.http.get<EventDetail>(`/api/events/${encodeURIComponent(id)}`);
+  }
+
+  getNeighbors(id: string): Observable<EventNeighbors> {
+    return this.http.get<EventNeighbors>(`/api/events/${encodeURIComponent(id)}/neighbors`);
   }
 
   mediaUrl(eventId: string, filename: string): string {

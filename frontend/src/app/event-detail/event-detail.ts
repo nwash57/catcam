@@ -2,8 +2,8 @@ import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { switchMap, timer } from 'rxjs';
-import { CatcamApi, EventDetail as EventDetailModel, MediaFile } from '../api';
+import { catchError, of, switchMap, timer } from 'rxjs';
+import { CatcamApi, EventDetail as EventDetailModel, EventNeighbors, MediaFile } from '../api';
 
 @Component({
   selector: 'app-event-detail',
@@ -21,6 +21,13 @@ export class EventDetail {
         const id = p.get('id')!;
         return timer(0, 5000).pipe(switchMap(() => this.api.getEvent(id)));
       }),
+    ),
+    { initialValue: null },
+  );
+
+  protected readonly neighbors = toSignal<EventNeighbors | null>(
+    this.route.paramMap.pipe(
+      switchMap(p => this.api.getNeighbors(p.get('id')!).pipe(catchError(() => of(null)))),
     ),
     { initialValue: null },
   );
