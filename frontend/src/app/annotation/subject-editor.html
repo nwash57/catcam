@@ -18,7 +18,7 @@
         type="text"
         class="min-w-0 flex-1 rounded border border-slate-200 px-1.5 py-1 text-xs placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
         placeholder="name (optional)"
-        [list]="suggestionsListId(i)"
+        [attr.list]="suggestionsListId(i)"
         [value]="subject.name ?? ''"
         (change)="updateName(i, $any($event.target).value)" />
       <button
