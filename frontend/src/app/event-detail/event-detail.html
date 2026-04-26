@@ -45,12 +45,25 @@
       } @else {
         <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
           @for (s of d.snapshots; track s.name) {
-            <button
-              type="button"
-              class="aspect-square rounded-lg overflow-hidden bg-slate-100 hover:ring-2 ring-slate-400"
-              (click)="lightbox.set(s)">
-              <img [src]="snapshotUrl(s)" [alt]="s.name" class="w-full h-full object-cover" />
-            </button>
+            <div class="relative group aspect-square rounded-lg overflow-hidden bg-slate-100">
+              <button
+                type="button"
+                class="w-full h-full hover:ring-2 ring-slate-400"
+                (click)="lightbox.set(s)">
+                <img [src]="snapshotUrl(s)" [alt]="s.name" class="w-full h-full object-cover" />
+              </button>
+              @if (hasAnnotation(s.name)) {
+                <span class="absolute bottom-1 left-1 rounded bg-emerald-600 text-white text-[9px] px-1 py-0.5 leading-none pointer-events-none">
+                  labeled
+                </span>
+              }
+              <button
+                type="button"
+                class="absolute top-1 right-1 rounded bg-black/60 text-white text-[10px] px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                (click)="openAnnotator(s); $event.stopPropagation()">
+                annotate
+              </button>
+            </div>
           }
         </div>
       }
@@ -69,10 +82,10 @@
           </div>
         }
         <div>
-          <dt class="text-slate-500 text-xs uppercase tracking-wide">Species</dt>
+          <dt class="text-slate-500 text-xs uppercase tracking-wide">Auto-detected</dt>
           <dd class="mt-1 flex flex-wrap gap-1.5">
             @for (s of d.summary.species; track s) {
-              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">{{ s }}</span>
+              <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">{{ s }}</span>
             }
             @if (d.summary.species.length === 0) {
               <span class="text-slate-400">none</span>
@@ -80,10 +93,31 @@
           </dd>
         </div>
         <div>
+          <dt class="text-slate-500 text-xs uppercase tracking-wide mb-1.5">Subjects</dt>
+          <dd>
+            <app-subject-editor
+              [subjects]="annotations().subjects"
+              [nameSuggestions]="nameSuggestions()"
+              (subjectsChange)="onSubjectsChange($event)" />
+          </dd>
+        </div>
+        <div>
           <dt class="text-slate-500 text-xs uppercase tracking-wide">Snapshots</dt>
           <dd>{{ d.summary.snapshotCount }}</dd>
         </div>
       </dl>
+
+      @if (isDirty()) {
+        <div class="mt-4 pt-3 border-t border-slate-200">
+          <button
+            type="button"
+            class="w-full rounded-lg bg-emerald-600 text-white text-sm py-1.5 hover:bg-emerald-700 disabled:opacity-50"
+            [disabled]="isSaving()"
+            (click)="saveAnnotations()">
+            {{ isSaving() ? 'Saving…' : 'Save annotations' }}
+          </button>
+        </div>
+      }
     </aside>
   </div>
 
@@ -93,6 +127,16 @@
       (click)="lightbox.set(null)">
       <img [src]="snapshotUrl(lb)" [alt]="lb.name" class="max-w-full max-h-full rounded-lg shadow-2xl" />
     </div>
+  }
+
+  @if (activeSnapshot(); as snap) {
+    <app-snapshot-annotator
+      [filename]="snap.name"
+      [imageUrl]="snapshotUrl(snap)"
+      [subjects]="annotations().subjects"
+      [existingAnnotation]="snapshotAnnotation(snap.name)"
+      (save)="onAnnotatorSave($event)"
+      (cancel)="onAnnotatorCancel()" />
   }
 } @else {
   <div class="text-sm text-slate-500">loading…</div>

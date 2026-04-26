@@ -81,9 +81,14 @@
           <div class="text-sm font-medium">{{ e.startedAt | date: 'MMM d, y · h:mm a' }}</div>
           <div class="mt-1 flex flex-wrap gap-1.5 items-center">
             @for (s of e.species; track s) {
-              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">{{ s }}</span>
+              <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">{{ s }}</span>
             }
-            @if (e.species.length === 0) {
+            @if (e.annotatedSubjectCount > 0) {
+              <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">
+                {{ e.annotatedSubjectCount }} labeled
+              </span>
+            }
+            @if (e.species.length === 0 && e.annotatedSubjectCount === 0) {
               <span class="text-slate-400 text-xs">untagged</span>
             }
           </div>
