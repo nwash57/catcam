@@ -1,10 +1,10 @@
 import { Component } from '@angular/core';
-import { RouterLink, RouterOutlet } from '@angular/router';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { DeviceMetricsPanel } from './device-metrics/device-metrics';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterLink, RouterOutlet, DeviceMetricsPanel],
+  imports: [RouterLink, RouterLinkActive, RouterOutlet, DeviceMetricsPanel],
   templateUrl: './app.html',
   styleUrl: './app.css',
 })
