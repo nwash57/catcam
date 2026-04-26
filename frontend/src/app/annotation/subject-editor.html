@@ -1,0 +1,36 @@
+<div class="space-y-2">
+  @for (subject of subjects(); track subject.id; let i = $index) {
+    <datalist [id]="suggestionsListId(i)">
+      @for (name of nameSuggestions(); track name) {
+        <option [value]="name" />
+      }
+    </datalist>
+    <div class="flex items-center gap-1.5">
+      <select
+        class="flex-none rounded border border-slate-200 bg-white px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-400"
+        [value]="subject.species"
+        (change)="updateSpecies(i, $any($event.target).value)">
+        @for (s of speciesList; track s) {
+          <option [value]="s">{{ s }}</option>
+        }
+      </select>
+      <input
+        type="text"
+        class="min-w-0 flex-1 rounded border border-slate-200 px-1.5 py-1 text-xs placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+        placeholder="name (optional)"
+        [list]="suggestionsListId(i)"
+        [value]="subject.name ?? ''"
+        (change)="updateName(i, $any($event.target).value)" />
+      <button
+        type="button"
+        class="flex-none text-slate-400 hover:text-red-500 px-1"
+        title="Remove"
+        (click)="removeSubject(i)">✕</button>
+    </div>
+  }
+
+  <button
+    type="button"
+    class="mt-1 text-xs text-emerald-700 hover:text-emerald-900 hover:underline"
+    (click)="addSubject()">+ add subject</button>
+</div>

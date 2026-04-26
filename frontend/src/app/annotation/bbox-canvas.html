@@ -1,0 +1,20 @@
+<div class="relative inline-block w-full select-none">
+  <img
+    #img
+    [src]="imageUrl()"
+    class="w-full rounded-lg"
+    alt="snapshot"
+    (load)="onImageLoad()" />
+  <canvas
+    #canvas
+    class="absolute inset-0 w-full h-full rounded-lg"
+    [class.cursor-crosshair]="activeSubjectId()"
+    (mousedown)="onMouseDown($event)"
+    (mousemove)="onMouseMove($event)"
+    (mouseup)="onMouseUp($event)"
+    (mouseleave)="onMouseUp($event)"
+    (touchstart)="onTouchStart($event)"
+    (touchmove)="onTouchMove($event)"
+    (touchend)="onTouchEnd($event)">
+  </canvas>
+</div>

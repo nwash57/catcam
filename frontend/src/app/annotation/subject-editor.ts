@@ -1,0 +1,43 @@
+import { Component, input, output } from '@angular/core';
+import { ALLOWED_SPECIES, AnnotatedSubject, Species } from '../api';
+
+@Component({
+  selector: 'app-subject-editor',
+  imports: [],
+  templateUrl: './subject-editor.html',
+})
+export class SubjectEditor {
+  readonly subjects = input.required<AnnotatedSubject[]>();
+  readonly nameSuggestions = input<string[]>([]);
+  readonly subjectsChange = output<AnnotatedSubject[]>();
+
+  protected readonly speciesList = ALLOWED_SPECIES;
+
+  protected addSubject(): void {
+    const existing = this.subjects();
+    const id = `s${existing.length + 1}_${Date.now()}`;
+    this.subjectsChange.emit([...existing, { id, species: 'cat', name: null }]);
+  }
+
+  protected updateSpecies(index: number, species: Species): void {
+    const updated = this.subjects().map((s, i) =>
+      i === index ? { ...s, species, name: null } : s
+    );
+    this.subjectsChange.emit(updated);
+  }
+
+  protected updateName(index: number, name: string): void {
+    const updated = this.subjects().map((s, i) =>
+      i === index ? { ...s, name: name.trim() || null } : s
+    );
+    this.subjectsChange.emit(updated);
+  }
+
+  protected removeSubject(index: number): void {
+    this.subjectsChange.emit(this.subjects().filter((_, i) => i !== index));
+  }
+
+  protected suggestionsListId(index: number): string {
+    return `name-suggestions-${index}`;
+  }
+}

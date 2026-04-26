@@ -1,0 +1,88 @@
+<div class="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 overflow-y-auto">
+  <div class="w-full max-w-3xl rounded-xl bg-white shadow-2xl my-4">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+      <h2 class="text-sm font-semibold text-slate-800">Annotate snapshot</h2>
+      <button type="button" class="text-slate-400 hover:text-slate-700 text-lg leading-none" (click)="onCancel()">✕</button>
+    </div>
+
+    <div class="p-4">
+      <app-bbox-canvas
+        [imageUrl]="imageUrl()"
+        [subjects]="subjects()"
+        [boxes]="boxes()"
+        [activeSubjectId]="activeSubjectId()"
+        (boxDrawn)="onBoxDrawn($event)" />
+
+      @if (activeSubjectId()) {
+        <p class="mt-2 text-xs text-center text-emerald-700">
+          Draw a rectangle on the image to set the bounding box. Click the button again to cancel.
+        </p>
+      }
+    </div>
+
+    <div class="border-t border-slate-200 px-4 py-3 space-y-3">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Subjects</p>
+      @for (subject of subjects(); track subject.id) {
+        <div class="flex items-start gap-3 py-1">
+          <input
+            type="checkbox"
+            class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+            [id]="'appears-' + subject.id"
+            [checked]="appearsInSnapshot(subject.id)"
+            (change)="setAppears(subject.id, $any($event.target).checked)" />
+          <label [for]="'appears-' + subject.id" class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span
+                class="inline-block w-2.5 h-2.5 rounded-sm flex-none"
+                [style.background]="colorFor(subject.id)"></span>
+              <span class="text-sm font-medium text-slate-800">{{ labelFor(subject.id) }}</span>
+            </div>
+            @if (appearsInSnapshot(subject.id)) {
+              <div class="mt-1.5 flex items-center gap-3 ml-5">
+                <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                    [checked]="getIncludeInTraining(subject.id)"
+                    (change)="setIncludeInTraining(subject.id, $any($event.target).checked)" />
+                  include in training
+                </label>
+                <button
+                  type="button"
+                  class="text-xs px-2 py-0.5 rounded border"
+                  [class.border-emerald-500]="activeSubjectId() === subject.id"
+                  [class.text-emerald-700]="activeSubjectId() === subject.id"
+                  [class.bg-emerald-50]="activeSubjectId() === subject.id"
+                  [class.border-slate-200]="activeSubjectId() !== subject.id"
+                  [class.text-slate-600]="activeSubjectId() !== subject.id"
+                  (click)="toggleDrawMode(subject.id)">
+                  {{ activeSubjectId() === subject.id ? 'drawing…' : (getBbox(subject.id) ? 'redraw bbox' : 'draw bbox') }}
+                </button>
+                @if (getBbox(subject.id)) {
+                  <button
+                    type="button"
+                    class="text-xs text-slate-400 hover:text-red-500"
+                    (click)="clearBbox(subject.id)">clear bbox</button>
+                }
+              </div>
+            }
+          </label>
+        </div>
+      }
+      @if (subjects().length === 0) {
+        <p class="text-xs text-slate-400">No subjects defined for this event. Add subjects in the sidebar first.</p>
+      }
+    </div>
+
+    <div class="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
+      <button
+        type="button"
+        class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+        (click)="onCancel()">Cancel</button>
+      <button
+        type="button"
+        class="text-sm px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+        (click)="onSave()">Save</button>
+    </div>
+  </div>
+</div>
