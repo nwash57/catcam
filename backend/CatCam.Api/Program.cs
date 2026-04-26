@@ -75,6 +75,29 @@ app.MapGet("/api/events/{id}", (string id) =>
     return Results.Ok(new EventDetail(summary, snapshots));
 });
 
+app.MapGet("/api/events/{id}/neighbors", (string id) =>
+{
+    if (!IsSafeSegment(id)) return Results.BadRequest();
+
+    if (!Directory.Exists(capturesDir))
+        return Results.Ok(new EventNeighbors(null, null));
+
+    // Directory names are `event_YYYYMMDD_HHMMSS`, ordinal desc = newest first.
+    var dirs = new DirectoryInfo(capturesDir)
+        .EnumerateDirectories("event_*")
+        .OrderByDescending(d => d.Name, StringComparer.Ordinal)
+        .Select(d => d.Name)
+        .ToArray();
+
+    var idx = Array.IndexOf(dirs, id);
+    if (idx < 0) return Results.NotFound();
+
+    var newer = idx > 0 ? dirs[idx - 1] : null;
+    var older = idx < dirs.Length - 1 ? dirs[idx + 1] : null;
+
+    return Results.Ok(new EventNeighbors(older, newer));
+});
+
 app.MapGet("/media/{eventId}/{filename}", (string eventId, string filename) =>
 {
     if (!IsSafeSegment(eventId) || !IsSafeSegment(filename))
@@ -199,3 +222,5 @@ record EventDetail(EventSummary Summary, IReadOnlyList<MediaFile> Snapshots);
 record EventPage(IReadOnlyList<EventSummary> Items, int Total);
 
 record StreamConfig(string? Url);
+
+record EventNeighbors(string? OlderId, string? NewerId);
