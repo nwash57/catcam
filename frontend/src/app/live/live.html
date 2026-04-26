@@ -1,16 +1,73 @@
 @let config = streamConfig();
+@let hasStream = config !== null && config.url !== null;
 
-<h2 class="text-lg font-semibold mb-4">Live</h2>
+<!-- Theater mode overlay -->
+@if (theater()) {
+  <div
+    class="fixed inset-0 z-50 bg-black flex flex-col"
+    (keydown.escape)="toggleTheater()"
+    tabindex="-1">
+    <div class="flex items-center justify-end gap-2 px-3 py-2 shrink-0">
+      <button
+        type="button"
+        title="Fullscreen"
+        class="rounded p-1.5 text-slate-400 hover:text-white hover:bg-white/10"
+        (click)="toggleFullscreen()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-5">
+          <path d="M13.28 7.78l3.22-3.22v2.69a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.69l-3.22 3.22a.75.75 0 001.06 1.06zM2 17.25v-4.5a.75.75 0 011.5 0v2.69l3.22-3.22a.75.75 0 011.06 1.06L4.56 16.5h2.69a.75.75 0 010 1.5h-4.5a.75.75 0 01-.75-.75zM12.22 13.28l3.22 3.22h-2.69a.75.75 0 000 1.5h4.5a.75.75 0 00.75-.75v-4.5a.75.75 0 00-1.5 0v2.69l-3.22-3.22a.75.75 0 10-1.06 1.06zM3.5 4.56l3.22 3.22a.75.75 0 001.06-1.06L4.56 3.5h2.69a.75.75 0 000-1.5h-4.5a.75.75 0 00-.75.75v4.5a.75.75 0 001.5 0V4.56z" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        title="Exit theater mode"
+        class="rounded p-1.5 text-slate-400 hover:text-white hover:bg-white/10"
+        (click)="toggleTheater()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-5">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+        </svg>
+      </button>
+    </div>
+    <div #theaterWrapper class="flex-1 flex items-center justify-center min-h-0">
+      <img [src]="config!.url" alt="Live stream" class="max-w-full max-h-full object-contain" />
+    </div>
+  </div>
+}
+
+<!-- Normal view -->
+<div class="flex items-center justify-between mb-4">
+  <h2 class="text-lg font-semibold">Live</h2>
+  @if (hasStream) {
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        title="Theater mode"
+        class="rounded-lg border border-slate-300 bg-white p-2 hover:bg-slate-100"
+        (click)="toggleTheater()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+          <path d="M13.28 7.78l3.22-3.22v2.69a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.69l-3.22 3.22a.75.75 0 001.06 1.06zM2 17.25v-4.5a.75.75 0 011.5 0v2.69l3.22-3.22a.75.75 0 011.06 1.06L4.56 16.5h2.69a.75.75 0 010 1.5h-4.5a.75.75 0 01-.75-.75zM12.22 13.28l3.22 3.22h-2.69a.75.75 0 000 1.5h4.5a.75.75 0 00.75-.75v-4.5a.75.75 0 00-1.5 0v2.69l-3.22-3.22a.75.75 0 10-1.06 1.06zM3.5 4.56l3.22 3.22a.75.75 0 001.06-1.06L4.56 3.5h2.69a.75.75 0 000-1.5h-4.5a.75.75 0 00-.75.75v4.5a.75.75 0 001.5 0V4.56z" />
+        </svg>
+      </button>
+    </div>
+  }
+</div>
 
 @if (config === null) {
   <div class="aspect-video rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
     Loading…
   </div>
 } @else if (config.url) {
-  <img
-    [src]="config.url"
-    alt="Live stream"
-    class="w-full rounded-xl bg-black aspect-video object-contain" />
+  <div #streamWrapper class="relative group rounded-xl overflow-hidden bg-black aspect-video">
+    <img [src]="config.url" alt="Live stream" class="w-full h-full object-contain" />
+    <button
+      type="button"
+      title="Fullscreen"
+      class="absolute bottom-3 right-3 rounded-lg bg-black/60 p-2 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+      (click)="toggleFullscreen()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-4">
+        <path d="M13.28 7.78l3.22-3.22v2.69a.75.75 0 001.5 0v-4.5a.75.75 0 00-.75-.75h-4.5a.75.75 0 000 1.5h2.69l-3.22 3.22a.75.75 0 001.06 1.06zM2 17.25v-4.5a.75.75 0 011.5 0v2.69l3.22-3.22a.75.75 0 011.06 1.06L4.56 16.5h2.69a.75.75 0 010 1.5h-4.5a.75.75 0 01-.75-.75zM12.22 13.28l3.22 3.22h-2.69a.75.75 0 000 1.5h4.5a.75.75 0 00.75-.75v-4.5a.75.75 0 00-1.5 0v2.69l-3.22-3.22a.75.75 0 10-1.06 1.06zM3.5 4.56l3.22 3.22a.75.75 0 001.06-1.06L4.56 3.5h2.69a.75.75 0 000-1.5h-4.5a.75.75 0 00-.75.75v4.5a.75.75 0 001.5 0V4.56z" />
+      </svg>
+    </button>
+  </div>
 } @else {
   <div class="aspect-video rounded-xl bg-slate-100 flex flex-col items-center justify-center gap-2 text-slate-400">
     <span>Stream not configured</span>

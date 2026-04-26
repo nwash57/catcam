@@ -7,10 +7,11 @@ with snapshots via [ntfy.sh](https://ntfy.sh).
 The system has two parts:
 
 - **Pi (detector)** — captures camera frames, runs YOLO, records video, serves a live MJPEG stream
-- **Server (web UI)** — .NET API + Angular frontend for browsing events, viewing recordings, and watching the live feed; handles H.264 transcoding so the Pi doesn't have to
+- **Server (web UI)** — .NET API + Angular frontend for browsing events, viewing recordings, watching the live feed, and handling H.264 transcoding
 
-These can run on the same machine or on separate ones. The typical setup is the Pi
-on the camera and a more powerful box (with the storage drive) running the web UI.
+**The recommended setup is a Pi for the camera and a separate always-on server box (with a storage drive) for the web UI.** The Pi skips the heavy ffmpeg transcode step (`--no-transcode`) and writes raw recordings directly to a network share; the server box picks them up and transcodes in the background. This keeps the Pi's CPU free and means you get a proper web UI without running it on constrained hardware.
+
+Both parts can run on one machine if you prefer — see [All-in-one](#all-in-one-pi-only) below.
 
 ## Pi setup
 
@@ -52,8 +53,8 @@ python -m cat_detect.main --threshold 0.5 --fps 20
 # Run detection less often to save CPU; snap every 3s during an event
 python -m cat_detect.main --detect-interval 2.0 --snapshot-interval 3.0
 
-# Save to a network share and let the server box transcode (recommended split setup)
-python -m cat_detect.main --save --stream --captures-dir /mnt/share/catcam --no-transcode
+# Recommended split setup: write to network share, skip local transcode
+python -m cat_detect.main --save --stream --captures-dir /mnt/catcam --no-transcode
 ```
 
 ## How it works
@@ -77,15 +78,37 @@ detections for 20 seconds (configurable with `--record-timeout`). Videos are
 saved alongside snapshots in the captures directory.
 
 By default, recordings are transcoded to browser-friendly H.264 (`libx264`,
-yuv420p, faststart) via ffmpeg at the end of each event — this runs in a
+yuv420p, faststart) via ffmpeg at the end of each event. This runs in a
 background thread so it doesn't interrupt the stream. Install ffmpeg on the Pi
-(`sudo apt install ffmpeg`) if you're using this mode.
+(`sudo apt install ffmpeg`) if you want to use this mode.
 
-With **`--no-transcode`**, the Pi skips ffmpeg entirely and writes only a raw
-`recording-raw.mp4`. The server's background `TranscodeService` picks it up
-within 30 seconds, transcodes it on the more powerful hardware, and updates the
-event. This is the recommended mode when the captures directory is on a separate
-server.
+With **`--no-transcode`**, the Pi skips ffmpeg entirely and writes only
+`recording-raw.mp4`. The server's background `TranscodeService` finds it within
+30 seconds, transcodes it on the more powerful hardware, and updates the event.
+The web UI shows "Video processing…" while this is in flight. This is the
+recommended mode when the captures directory is on a network share — the Pi
+needs no ffmpeg install and barely notices the recording step.
+
+> **Stuck recordings?** If the server wasn't running when events were recorded,
+> `recording-raw.mp4` files may have accumulated. Start (or restart) the server
+> and the `TranscodeService` will find and transcode them automatically on the
+> next 30-second poll. Make sure `ffmpeg` is installed on the server box
+> (`sudo apt install ffmpeg` or included automatically in the Docker image).
+
+## Web UI
+
+The web UI is served by the .NET backend and Angular frontend running on the
+server box.
+
+- **Captures** (`/`) — paginated grid of detection events with thumbnail
+  previews, species tags, and duration. Click any event to see the recording
+  and snapshots.
+- **Live** (`/live`) — live MJPEG stream from the Pi. Has a **theater mode**
+  button (fills the browser window) and a **fullscreen** button (OS-level
+  fullscreen, shows on hover over the stream). Requires `STREAM_URL` to be
+  configured.
+- **Device metrics** — CPU temperature, memory, disk, and load average pulled
+  from the Pi (when `PI_METRICS_URL` is set) or the server box.
 
 ## Options
 
@@ -113,12 +136,147 @@ server.
 
 ## Deployment
 
+### Split: Pi detector + server box (recommended)
+
+The Pi handles only camera capture, detection, and streaming. The server box
+handles storage, transcoding, and the web UI. The Pi writes directly to a
+directory shared from the server over NFS.
+
+#### Step 1 — Set up the NFS share on the server box
+
+```bash
+sudo apt install nfs-kernel-server
+sudo mkdir -p /srv/catcam
+sudo chown $USER:$USER /srv/catcam
+```
+
+Add an exports entry (replace `192.168.1.0/24` with your local subnet):
+
+```bash
+echo '/srv/catcam  192.168.1.0/24(rw,sync,no_subtree_check,all_squash,anonuid=1000,anongid=1000)' \
+  | sudo tee -a /etc/exports
+sudo exportfs -ra
+sudo systemctl enable --now nfs-kernel-server
+```
+
+> `all_squash` maps any remote user to the local `anonuid`/`anongid` (1000 by
+> default — your first user). Adjust if your user has a different UID
+> (`id -u` to check).
+
+#### Step 2 — Mount the share on the Pi
+
+```bash
+sudo apt install nfs-common
+sudo mkdir -p /mnt/catcam
+```
+
+Add to `/etc/fstab` so it mounts automatically on boot (replace `server-ip`):
+
+```
+server-ip:/srv/catcam  /mnt/catcam  nfs  defaults,_netdev,rw  0  0
+```
+
+Mount it now without rebooting:
+
+```bash
+sudo mount -a
+```
+
+Verify the Pi can write:
+
+```bash
+touch /mnt/catcam/.test && echo "OK" && rm /mnt/catcam/.test
+```
+
+#### Step 3 — Pi systemd service
+
+```bash
+sudo nano /etc/systemd/system/catcam.service
+```
+
+```ini
+[Unit]
+Description=Catcam wildlife detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/catcam
+ExecStart=/home/pi/catcam/.venv/bin/python -m cat_detect.main \
+  --save \
+  --stream \
+  --stream-port 8085 \
+  --ntfy my-topic \
+  --flip \
+  --captures-dir /mnt/catcam \
+  --no-transcode
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> `After=network-online.target` ensures the NFS mount is available before the
+> detector starts. If the Pi boots faster than the NFS comes up, also add
+> `After=mnt-catcam.mount` (systemd auto-generates a unit name from the
+> fstab mount point).
+
+#### Step 4 — Server box: Docker Compose
+
+Clone the repo on the server box and create your `.env`:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+```env
+CAPTURES_DIR=/srv/catcam          # local path to your captures directory
+STREAM_URL=http://pi-ip:8085/     # Pi's MJPEG stream URL
+PI_METRICS_URL=http://pi-ip:8085/ # same host; used for the metrics panel
+```
+
+Bring it up:
+
+```bash
+docker compose up -d
+```
+
+The web UI will be available at `http://server-ip/`. The `TranscodeService`
+runs inside the API container and polls for new `recording-raw.mp4` files every
+30 seconds; ffmpeg is included in the container image.
+
+To rebuild after a code change:
+
+```bash
+docker compose up -d --build
+```
+
+#### Step 5 — Enable and start the Pi service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable catcam
+sudo systemctl start catcam
+```
+
+Check status and logs:
+
+```bash
+sudo systemctl status catcam
+journalctl -u catcam -f
+```
+
+---
+
 ### All-in-one (Pi only)
 
-Run the detector, web UI, and transcoding all on the Pi. Straightforward, but
-the Pi will be busy during transcodes. No web UI setup required beyond the Pi.
-
-Set up as a systemd service:
+Run the detector, web UI, and transcoding all on one machine. Simpler to set up
+but the machine will be busy during transcodes, and you'll need ffmpeg installed
+locally. Suitable for a dedicated always-on NAS or mini PC with a USB camera.
 
 ```bash
 sudo nano /etc/systemd/system/catcam.service
@@ -146,93 +304,22 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Then run the .NET API and Angular frontend on the same Pi (see the server setup
-below, or run them manually for development).
-
-### Split: Pi detector + server box
-
-The Pi runs only the detector and MJPEG stream. A separate server box (with the
-storage drive) runs the web UI and handles transcoding.
-
-**Step 1 — Share the captures directory**
-
-Export the captures directory from the server box over NFS or SMB so the Pi can
-write to it. Exact steps depend on your OS; the Pi just needs write access to a
-mounted path like `/mnt/share/catcam`.
-
-**Step 2 — Pi systemd service**
-
-```ini
-[Unit]
-Description=Catcam wildlife detector
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/catcam
-ExecStart=/home/pi/catcam/.venv/bin/python -m cat_detect.main \
-  --save \
-  --stream \
-  --stream-port 8085 \
-  --ntfy my-topic \
-  --flip \
-  --captures-dir /mnt/share/catcam \
-  --no-transcode
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Key differences from all-in-one: `--stream` starts the MJPEG feed, `--no-transcode`
-leaves the raw recording for the server to handle.
-
-**Step 3 — Server box: Docker Compose**
-
-Clone the repo on the server box, copy `.env.example` to `.env`, and fill it in:
-
-```bash
-cp .env.example .env
-nano .env
-```
+Run the Docker Compose stack on the same machine, pointing `CAPTURES_DIR` at
+the same local path:
 
 ```env
-CAPTURES_DIR=/mnt/share/CatCam     # path to your captures drive
-STREAM_URL=http://catcam.local:8085/ # Pi's MJPEG stream URL
+CAPTURES_DIR=/home/pi/captures
+STREAM_URL=http://localhost:8085/
 ```
-
-Then bring it up:
 
 ```bash
 docker compose up -d
 ```
 
-The web UI will be available at `http://<server-ip>/`. The `TranscodeService`
-runs inside the API container and polls for new recordings every 30 seconds.
-ffmpeg is included in the API container image.
+Without `--no-transcode` the Pi does its own ffmpeg transcode after each event.
+Install ffmpeg first: `sudo apt install ffmpeg`.
 
-To rebuild after a code change:
-
-```bash
-docker compose up -d --build
-```
-
-**Step 4 — Enable and start the Pi service**
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable catcam
-sudo systemctl start catcam
-```
-
-Check status and logs:
-
-```bash
-sudo systemctl status catcam
-journalctl -u catcam -f
-```
+---
 
 ### Development
 
@@ -270,7 +357,8 @@ backend/             .NET API (runs on the server box)
 frontend/            Angular web UI (runs on the server box)
   src/app/
     events-list/     Paginated event grid with thumbnails
-    event-detail/    Event detail: live MJPEG stream or recorded video + snapshots
+    event-detail/    Event detail: live MJPEG or recorded video + snapshots
+    live/            Dedicated live stream page with theater and fullscreen modes
     device-metrics/  Pi health dashboard
 ```
 
