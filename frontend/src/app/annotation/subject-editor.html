@@ -2,7 +2,7 @@
   @for (subject of subjects(); track subject.id; let i = $index) {
     <datalist [id]="suggestionsListId(i)">
       @for (name of nameSuggestions(); track name) {
-        <option [value]="name" />
+        <option [value]="name"></option>
       }
     </datalist>
     <div class="flex items-center gap-1.5">
