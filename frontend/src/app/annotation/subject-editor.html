@@ -1,10 +1,5 @@
 <div class="space-y-2">
   @for (subject of subjects(); track subject.id; let i = $index) {
-    <datalist [id]="suggestionsListId(i)">
-      @for (name of nameSuggestions(); track name) {
-        <option [value]="name"></option>
-      }
-    </datalist>
     <div class="flex items-center gap-1.5">
       <select
         class="flex-none rounded border border-slate-200 bg-white px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-400"
@@ -14,13 +9,26 @@
           <option [value]="s">{{ s }}</option>
         }
       </select>
-      <input
-        type="text"
-        class="min-w-0 flex-1 rounded border border-slate-200 px-1.5 py-1 text-xs placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
-        placeholder="name (optional)"
-        [attr.list]="suggestionsListId(i)"
-        [value]="subject.name ?? ''"
-        (change)="updateName(i, $any($event.target).value)" />
+      <div class="relative min-w-0 flex-1">
+        <input
+          type="text"
+          class="w-full rounded border border-slate-200 px-1.5 py-1 text-xs placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+          placeholder="name (optional)"
+          [value]="subject.name ?? ''"
+          (focus)="openDropdown(i)"
+          (blur)="onNameBlur()"
+          (input)="onNameInput(i, $any($event.target).value)" />
+        @if (activeDropdownIndex() === i && filteredSuggestions(i).length > 0) {
+          <ul class="absolute z-20 w-full bg-white border border-slate-200 rounded shadow-lg mt-0.5 max-h-40 overflow-y-auto">
+            @for (name of filteredSuggestions(i); track name) {
+              <li
+                class="px-2 py-1 text-xs text-slate-700 hover:bg-emerald-50 hover:text-emerald-800 cursor-pointer"
+                (mousedown)="$event.preventDefault()"
+                (click)="selectName(i, name)">{{ name }}</li>
+            }
+          </ul>
+        }
+      </div>
       <button
         type="button"
         class="flex-none text-slate-400 hover:text-red-500 px-1"

@@ -10,9 +10,6 @@
     class="absolute inset-0 w-full h-full rounded-lg"
     [class.cursor-crosshair]="activeSubjectId()"
     (mousedown)="onMouseDown($event)"
-    (mousemove)="onMouseMove($event)"
-    (mouseup)="onMouseUp($event)"
-    (mouseleave)="onMouseUp($event)"
     (touchstart)="onTouchStart($event)"
     (touchmove)="onTouchMove($event)"
     (touchend)="onTouchEnd($event)">

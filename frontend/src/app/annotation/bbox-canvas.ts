@@ -2,12 +2,18 @@ import {
   AfterViewInit,
   Component,
   ElementRef,
+  OnDestroy,
   ViewChild,
   effect,
   input,
   output,
 } from '@angular/core';
 import { AnnotatedSubject, BoundingBox } from '../api';
+
+export interface PreviewBox {
+  bbox: BoundingBox;
+  label: string;
+}
 
 export interface DrawnBox {
   subjectId: string;
@@ -20,11 +26,12 @@ const SUBJECT_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
   selector: 'app-bbox-canvas',
   templateUrl: './bbox-canvas.html',
 })
-export class BboxCanvas implements AfterViewInit {
+export class BboxCanvas implements AfterViewInit, OnDestroy {
   readonly imageUrl = input.required<string>();
   readonly subjects = input.required<AnnotatedSubject[]>();
   readonly boxes = input<DrawnBox[]>([]);
   readonly activeSubjectId = input<string | null>(null);
+  readonly previewBox = input<PreviewBox | null>(null);
   readonly boxDrawn = output<DrawnBox>();
 
   @ViewChild('canvas') private canvasRef!: ElementRef<HTMLCanvasElement>;
@@ -33,17 +40,53 @@ export class BboxCanvas implements AfterViewInit {
   private dragStart: { x: number; y: number } | null = null;
   private dragCurrent: { x: number; y: number } | null = null;
 
+  private readonly onDocMouseMove = (e: MouseEvent) => {
+    if (!this.dragStart) return;
+    const rect = this.canvasRef.nativeElement.getBoundingClientRect();
+    this.dragCurrent = {
+      x: Math.max(0, Math.min(e.clientX - rect.left, rect.width)),
+      y: Math.max(0, Math.min(e.clientY - rect.top, rect.height)),
+    };
+    this.redraw();
+  };
+
+  private readonly onDocMouseUp = (e: MouseEvent) => {
+    document.removeEventListener('mousemove', this.onDocMouseMove);
+    document.removeEventListener('mouseup', this.onDocMouseUp);
+    if (!this.dragStart || !this.activeSubjectId()) {
+      this.dragStart = null;
+      this.dragCurrent = null;
+      this.redraw();
+      return;
+    }
+    const rect = this.canvasRef.nativeElement.getBoundingClientRect();
+    const ex = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const ey = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+    const box = this.makeBox(this.dragStart.x, this.dragStart.y, ex, ey, rect.width, rect.height);
+    if (box.width > 0.01 && box.height > 0.01) {
+      this.boxDrawn.emit({ subjectId: this.activeSubjectId()!, box });
+    }
+    this.dragStart = null;
+    this.dragCurrent = null;
+    this.redraw();
+  };
+
   constructor() {
-    // Redraw whenever boxes or activeSubjectId signal changes
     effect(() => {
       this.boxes();
       this.activeSubjectId();
+      this.previewBox();
       this.redraw();
     });
   }
 
   ngAfterViewInit(): void {
     this.redraw();
+  }
+
+  ngOnDestroy(): void {
+    document.removeEventListener('mousemove', this.onDocMouseMove);
+    document.removeEventListener('mouseup', this.onDocMouseUp);
   }
 
   protected colorFor(subjectId: string): string {
@@ -56,35 +99,9 @@ export class BboxCanvas implements AfterViewInit {
     const rect = this.canvasRef.nativeElement.getBoundingClientRect();
     this.dragStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     this.dragCurrent = { ...this.dragStart };
+    document.addEventListener('mousemove', this.onDocMouseMove);
+    document.addEventListener('mouseup', this.onDocMouseUp);
     event.preventDefault();
-  }
-
-  protected onMouseMove(event: MouseEvent): void {
-    if (!this.dragStart) return;
-    const rect = this.canvasRef.nativeElement.getBoundingClientRect();
-    this.dragCurrent = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    this.redraw();
-  }
-
-  protected onMouseUp(event: MouseEvent): void {
-    if (!this.dragStart || !this.activeSubjectId()) return;
-    const rect = this.canvasRef.nativeElement.getBoundingClientRect();
-    const ex = event.clientX - rect.left;
-    const ey = event.clientY - rect.top;
-    const w = rect.width;
-    const h = rect.height;
-    const box: BoundingBox = {
-      x: Math.max(0, Math.min(this.dragStart.x, ex) / w),
-      y: Math.max(0, Math.min(this.dragStart.y, ey) / h),
-      width: Math.min(1, Math.abs(ex - this.dragStart.x) / w),
-      height: Math.min(1, Math.abs(ey - this.dragStart.y) / h),
-    };
-    if (box.width > 0.01 && box.height > 0.01) {
-      this.boxDrawn.emit({ subjectId: this.activeSubjectId()!, box });
-    }
-    this.dragStart = null;
-    this.dragCurrent = null;
-    this.redraw();
   }
 
   protected onTouchStart(event: TouchEvent): void {
@@ -109,22 +126,28 @@ export class BboxCanvas implements AfterViewInit {
     if (!this.dragStart || !this.activeSubjectId()) return;
     const rect = this.canvasRef.nativeElement.getBoundingClientRect();
     const t = event.changedTouches[0];
-    const ex = t.clientX - rect.left;
-    const ey = t.clientY - rect.top;
-    const w = rect.width;
-    const h = rect.height;
-    const box: BoundingBox = {
-      x: Math.max(0, Math.min(this.dragStart.x, ex) / w),
-      y: Math.max(0, Math.min(this.dragStart.y, ey) / h),
-      width: Math.min(1, Math.abs(ex - this.dragStart.x) / w),
-      height: Math.min(1, Math.abs(ey - this.dragStart.y) / h),
-    };
+    const box = this.makeBox(
+      this.dragStart.x, this.dragStart.y,
+      t.clientX - rect.left, t.clientY - rect.top,
+      rect.width, rect.height
+    );
     if (box.width > 0.01 && box.height > 0.01) {
       this.boxDrawn.emit({ subjectId: this.activeSubjectId()!, box });
     }
     this.dragStart = null;
     this.dragCurrent = null;
     this.redraw();
+  }
+
+  private makeBox(sx: number, sy: number, ex: number, ey: number, w: number, h: number): BoundingBox {
+    const x = Math.max(0, Math.min(sx, ex) / w);
+    const y = Math.max(0, Math.min(sy, ey) / h);
+    return {
+      x,
+      y,
+      width: Math.min(Math.abs(ex - sx) / w, 1 - x),
+      height: Math.min(Math.abs(ey - sy) / h, 1 - y),
+    };
   }
 
   private redraw(): void {
@@ -154,6 +177,24 @@ export class BboxCanvas implements AfterViewInit {
         drawn.box.height * h
       );
       ctx.setLineDash([]);
+    }
+
+    // Draw hover-preview suggestion box
+    const preview = this.previewBox();
+    if (preview) {
+      const { x, y, width, height } = preview.bbox;
+      ctx.save();
+      ctx.strokeStyle = '#7c3aed';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.10)';
+      ctx.fillRect(x * w, y * h, width * w, height * h);
+      ctx.strokeRect(x * w, y * h, width * w, height * h);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#7c3aed';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText(preview.label, x * w + 3, y * h - 4);
+      ctx.restore();
     }
 
     // Draw in-progress drag rectangle

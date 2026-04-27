@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, input, output, signal } from '@angular/core';
-import { AnnotatedSubject, BoundingBox, SnapshotAnnotation, SubjectAnnotation } from '../api';
-import { BboxCanvas, DrawnBox } from './bbox-canvas';
+import { AnnotatedSubject, AutoLabelSnapshotResult, BoundingBox, SnapshotAnnotation, SubjectAnnotation } from '../api';
+import { BboxCanvas, DrawnBox, PreviewBox } from './bbox-canvas';
 
 const SUBJECT_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
 
@@ -14,11 +14,36 @@ export class SnapshotAnnotator implements OnInit {
   readonly imageUrl = input.required<string>();
   readonly subjects = input.required<AnnotatedSubject[]>();
   readonly existingAnnotation = input<SnapshotAnnotation | null>(null);
+  readonly autoLabelSuggestions = input<AutoLabelSnapshotResult | null>(null);
+  readonly hasPrev = input<boolean>(false);
+  readonly hasNext = input<boolean>(false);
   readonly save = output<SnapshotAnnotation>();
+  readonly saveAndNext = output<SnapshotAnnotation>();
+  readonly skip = output<void>();
+  readonly back = output<void>();
   readonly cancel = output<void>();
 
   protected readonly activeSubjectId = signal<string | null>(null);
   protected readonly rows = signal<SubjectAnnotation[]>([]);
+  protected readonly assignedSuggestions = signal<Set<number>>(new Set());
+  protected readonly hoveredSuggestionIndex = signal<number | null>(null);
+  // Maps subjectId → suggestion index that provided the current bbox, so clearing can free the suggestion
+  private readonly suggestionSourceMap = signal<Map<string, number>>(new Map());
+
+  protected readonly pendingSuggestions = computed(() =>
+    (this.autoLabelSuggestions()?.detections ?? [])
+      .map((d, i) => ({ ...d, index: i }))
+      .filter(d => !this.assignedSuggestions().has(d.index))
+  );
+
+  protected readonly previewBox = computed<PreviewBox | null>(() => {
+    const idx = this.hoveredSuggestionIndex();
+    if (idx === null) return null;
+    const det = this.autoLabelSuggestions()?.detections[idx];
+    if (!det) return null;
+    const pct = Math.round(det.confidence * 100);
+    return { bbox: det.bbox, label: `${det.species} ${pct}%` };
+  });
 
   ngOnInit(): void {
     const existing = this.existingAnnotation();
@@ -84,6 +109,7 @@ export class SnapshotAnnotator implements OnInit {
     if (this.activeSubjectId() === subjectId) {
       this.activeSubjectId.set(null);
     }
+    this.freeSuggestionSource(subjectId);
   }
 
   protected readonly boxes = computed<DrawnBox[]>(() =>
@@ -99,14 +125,61 @@ export class SnapshotAnnotator implements OnInit {
         : r
     ));
     this.activeSubjectId.set(null);
+    this.freeSuggestionSource(drawn.subjectId);
   }
 
   protected onSave(): void {
-    const annotations = this.rows().filter(r => r.includeInTraining || r.boundingBox !== null);
-    this.save.emit({ filename: this.filename(), annotations });
+    this.save.emit(this.buildAnnotation());
+  }
+
+  protected onSaveAndNext(): void {
+    const annotation = this.buildAnnotation();
+    this.saveAndNext.emit({
+      ...annotation,
+      annotations: annotation.annotations.map(a => ({ ...a, boundingBox: null })),
+    });
+  }
+
+  protected onSkip(): void {
+    this.skip.emit();
+  }
+
+  protected onBack(): void {
+    this.back.emit();
   }
 
   protected onCancel(): void {
     this.cancel.emit();
+  }
+
+  private buildAnnotation(): SnapshotAnnotation {
+    const annotations = this.rows().filter(r => r.includeInTraining || r.boundingBox !== null);
+    return { filename: this.filename(), annotations };
+  }
+
+  protected acceptSuggestion(index: number, subjectId: string): void {
+    const det = this.autoLabelSuggestions()?.detections[index];
+    if (!det) return;
+    // Free any suggestion previously assigned to this subject
+    this.freeSuggestionSource(subjectId);
+    this.rows.update(rows => rows.map(r =>
+      r.subjectId === subjectId
+        ? { ...r, boundingBox: det.bbox, includeInTraining: true }
+        : r
+    ));
+    this.assignedSuggestions.update(s => new Set([...s, index]));
+    this.suggestionSourceMap.update(m => new Map([...m, [subjectId, index]]));
+  }
+
+  protected dismissSuggestion(index: number): void {
+    this.assignedSuggestions.update(s => new Set([...s, index]));
+  }
+
+  private freeSuggestionSource(subjectId: string): void {
+    const src = this.suggestionSourceMap().get(subjectId);
+    if (src !== undefined) {
+      this.assignedSuggestions.update(s => { const n = new Set(s); n.delete(src); return n; });
+      this.suggestionSourceMap.update(m => { const n = new Map(m); n.delete(subjectId); return n; });
+    }
   }
 }

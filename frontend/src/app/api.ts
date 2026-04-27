@@ -78,6 +78,21 @@ export interface StreamConfig {
   url: string | null;
 }
 
+export interface AutoLabelDetection {
+  species: Species;
+  confidence: number;
+  bbox: BoundingBox;
+}
+
+export interface AutoLabelSnapshotResult {
+  filename: string;
+  detections: AutoLabelDetection[];
+}
+
+export interface AutoLabelResponse {
+  snapshots: AutoLabelSnapshotResult[];
+}
+
 export interface LoadAverage {
   oneMinute: number;
   fiveMinute: number;
@@ -153,6 +168,17 @@ export class CatcamApi {
   getSubjectNames(species?: Species): Observable<SubjectNameList> {
     const params = species ? new HttpParams().set('species', species) : undefined;
     return this.http.get<SubjectNameList>('/api/subjects/names', { params });
+  }
+
+  deleteEvent(id: string): Observable<void> {
+    return this.http.delete<void>(`/api/events/${encodeURIComponent(id)}`);
+  }
+
+  autoLabel(eventId: string): Observable<AutoLabelResponse> {
+    return this.http.post<AutoLabelResponse>(
+      `/api/events/${encodeURIComponent(eventId)}/auto-label`,
+      null,
+    );
   }
 
   getMetrics(): Observable<DeviceMetrics> {

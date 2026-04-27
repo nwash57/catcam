@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using CatCam.Api;
@@ -8,6 +9,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<MetricsReader>();
 builder.Services.AddHostedService<TranscodeService>();
+builder.Services.AddHttpClient("AutoLabel")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromMinutes(5));
 
 const string AngularDevCors = "AngularDev";
 builder.Services.AddCors(options =>
@@ -134,7 +137,7 @@ app.MapPut("/api/events/{id}/annotations", async (string id, EventAnnotations bo
     // Validate bounding box coordinates
     static bool ValidBox(AnnotationBoundingBox b) =>
         b.X >= 0 && b.Y >= 0 && b.Width > 0 && b.Height > 0
-        && b.X + b.Width <= 1.0 && b.Y + b.Height <= 1.0;
+        && b.X + b.Width <= 1.0 + 1e-9 && b.Y + b.Height <= 1.0 + 1e-9;
     var badBox = body.Snapshots
         .SelectMany(s => s.Annotations)
         .Where(a => a.BoundingBox is not null)
@@ -151,6 +154,54 @@ app.MapPut("/api/events/{id}/annotations", async (string id, EventAnnotations bo
     var saved = body with { SchemaVersion = 1, UpdatedAt = DateTimeOffset.UtcNow };
     await WriteAnnotationsAsync(dir, saved, jsonOptions, ct);
     return Results.Ok(saved);
+});
+
+app.MapPost("/api/events/{id}/auto-label", async (
+    string id, IConfiguration config, IHttpClientFactory httpFactory, CancellationToken ct) =>
+{
+    if (!IsSafeSegment(id)) return Results.BadRequest();
+    var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
+    if (!dir.Exists) return Results.NotFound();
+
+    var sidecarUrl = config["AutoLabel:Url"];
+    if (string.IsNullOrWhiteSpace(sidecarUrl))
+        return Results.Problem("Auto-label service not configured.", statusCode: 503);
+
+    var snapshots = dir.EnumerateFiles("*.jpg")
+        .Concat(dir.EnumerateFiles("*.jpeg"))
+        .Concat(dir.EnumerateFiles("*.png"))
+        .OrderBy(f => f.Name);
+
+    var client = httpFactory.CreateClient("AutoLabel");
+    var results = new List<AutoLabelSnapshotResult>();
+
+    foreach (var snap in snapshots)
+    {
+        try
+        {
+            var resp = await client.PostAsJsonAsync(
+                $"{sidecarUrl}/label",
+                new { image_path = snap.FullName },
+                jsonOptions, ct);
+            if (!resp.IsSuccessStatusCode) continue;
+            var body = await resp.Content.ReadFromJsonAsync<JsonElement>(jsonOptions, ct);
+            var detections = body.GetProperty("detections")
+                .Deserialize<List<AutoLabelDetection>>(jsonOptions) ?? [];
+            results.Add(new AutoLabelSnapshotResult(snap.Name, detections));
+        }
+        catch { /* skip failed snapshots */ }
+    }
+
+    return Results.Ok(new AutoLabelResponse(results));
+});
+
+app.MapDelete("/api/events/{id}", (string id) =>
+{
+    if (!IsSafeSegment(id)) return Results.BadRequest();
+    var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
+    if (!dir.Exists) return Results.NotFound();
+    dir.Delete(recursive: true);
+    return Results.NoContent();
 });
 
 app.MapGet("/api/subjects/names", (string? species) =>
@@ -338,3 +389,15 @@ record AnnotationBoundingBox(
     [property: JsonPropertyName("y")] double Y,
     [property: JsonPropertyName("width")] double Width,
     [property: JsonPropertyName("height")] double Height);
+
+record AutoLabelDetection(
+    [property: JsonPropertyName("species")] string Species,
+    [property: JsonPropertyName("confidence")] double Confidence,
+    [property: JsonPropertyName("bbox")] AnnotationBoundingBox Bbox);
+
+record AutoLabelSnapshotResult(
+    [property: JsonPropertyName("filename")] string Filename,
+    [property: JsonPropertyName("detections")] List<AutoLabelDetection> Detections);
+
+record AutoLabelResponse(
+    [property: JsonPropertyName("snapshots")] List<AutoLabelSnapshotResult> Snapshots);

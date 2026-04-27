@@ -1,88 +1,144 @@
 <div class="fixed inset-0 z-50 flex items-start justify-center bg-black/80 p-4 overflow-y-auto">
-  <div class="w-full max-w-3xl rounded-xl bg-white shadow-2xl my-4">
-    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+  <div class="w-full max-w-6xl rounded-xl bg-white shadow-2xl my-4 flex flex-col">
+    <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3 flex-none">
       <h2 class="text-sm font-semibold text-slate-800">Annotate snapshot</h2>
       <button type="button" class="text-slate-400 hover:text-slate-700 text-lg leading-none" (click)="onCancel()">✕</button>
     </div>
 
-    <div class="p-4">
-      <app-bbox-canvas
-        [imageUrl]="imageUrl()"
-        [subjects]="subjects()"
-        [boxes]="boxes()"
-        [activeSubjectId]="activeSubjectId()"
-        (boxDrawn)="onBoxDrawn($event)" />
+    <div class="flex min-h-0 flex-1">
+      <!-- Image / canvas -->
+      <div class="flex-1 min-w-0 p-4 flex flex-col">
+        <app-bbox-canvas
+          [imageUrl]="imageUrl()"
+          [subjects]="subjects()"
+          [boxes]="boxes()"
+          [activeSubjectId]="activeSubjectId()"
+          [previewBox]="previewBox()"
+          (boxDrawn)="onBoxDrawn($event)" />
+        @if (activeSubjectId()) {
+          <p class="mt-2 text-xs text-center text-emerald-700">
+            Draw a rectangle on the image to set the bounding box. Click the button again to cancel.
+          </p>
+        }
+      </div>
 
-      @if (activeSubjectId()) {
-        <p class="mt-2 text-xs text-center text-emerald-700">
-          Draw a rectangle on the image to set the bounding box. Click the button again to cancel.
-        </p>
-      }
-    </div>
-
-    <div class="border-t border-slate-200 px-4 py-3 space-y-3">
-      <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Subjects</p>
-      @for (subject of subjects(); track subject.id) {
-        <div class="flex items-start gap-3 py-1">
-          <input
-            type="checkbox"
-            class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
-            [id]="'appears-' + subject.id"
-            [checked]="appearsInSnapshot(subject.id)"
-            (change)="setAppears(subject.id, $any($event.target).checked)" />
-          <label [for]="'appears-' + subject.id" class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span
-                class="inline-block w-2.5 h-2.5 rounded-sm flex-none"
-                [style.background]="colorFor(subject.id)"></span>
-              <span class="text-sm font-medium text-slate-800">{{ labelFor(subject.id) }}</span>
+      <!-- Controls panel -->
+      <div class="w-72 flex-none border-l border-slate-200 flex flex-col">
+        <div class="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Subjects</p>
+          @for (subject of subjects(); track subject.id) {
+            <div class="flex items-start gap-3 py-1">
+              <input
+                type="checkbox"
+                class="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                [id]="'appears-' + subject.id"
+                [checked]="appearsInSnapshot(subject.id)"
+                (change)="setAppears(subject.id, $any($event.target).checked)" />
+              <label [for]="'appears-' + subject.id" class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="inline-block w-2.5 h-2.5 rounded-sm flex-none"
+                    [style.background]="colorFor(subject.id)"></span>
+                  <span class="text-sm font-medium text-slate-800">{{ labelFor(subject.id) }}</span>
+                </div>
+                @if (appearsInSnapshot(subject.id)) {
+                  <div class="mt-1.5 flex flex-wrap items-center gap-2 ml-5">
+                    <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
+                        [checked]="getIncludeInTraining(subject.id)"
+                        (change)="setIncludeInTraining(subject.id, $any($event.target).checked)" />
+                      include in training
+                    </label>
+                    <button
+                      type="button"
+                      class="text-xs px-2 py-0.5 rounded border"
+                      [class.border-emerald-500]="activeSubjectId() === subject.id"
+                      [class.text-emerald-700]="activeSubjectId() === subject.id"
+                      [class.bg-emerald-50]="activeSubjectId() === subject.id"
+                      [class.border-slate-200]="activeSubjectId() !== subject.id"
+                      [class.text-slate-600]="activeSubjectId() !== subject.id"
+                      (click)="toggleDrawMode(subject.id)">
+                      {{ activeSubjectId() === subject.id ? 'drawing…' : (getBbox(subject.id) ? 'redraw bbox' : 'draw bbox') }}
+                    </button>
+                    @if (getBbox(subject.id)) {
+                      <button
+                        type="button"
+                        class="text-xs text-slate-400 hover:text-red-500"
+                        (click)="clearBbox(subject.id)">clear bbox</button>
+                    }
+                  </div>
+                }
+              </label>
             </div>
-            @if (appearsInSnapshot(subject.id)) {
-              <div class="mt-1.5 flex items-center gap-3 ml-5">
-                <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400"
-                    [checked]="getIncludeInTraining(subject.id)"
-                    (change)="setIncludeInTraining(subject.id, $any($event.target).checked)" />
-                  include in training
-                </label>
-                <button
-                  type="button"
-                  class="text-xs px-2 py-0.5 rounded border"
-                  [class.border-emerald-500]="activeSubjectId() === subject.id"
-                  [class.text-emerald-700]="activeSubjectId() === subject.id"
-                  [class.bg-emerald-50]="activeSubjectId() === subject.id"
-                  [class.border-slate-200]="activeSubjectId() !== subject.id"
-                  [class.text-slate-600]="activeSubjectId() !== subject.id"
-                  (click)="toggleDrawMode(subject.id)">
-                  {{ activeSubjectId() === subject.id ? 'drawing…' : (getBbox(subject.id) ? 'redraw bbox' : 'draw bbox') }}
-                </button>
-                @if (getBbox(subject.id)) {
+          }
+          @if (subjects().length === 0) {
+            <p class="text-xs text-slate-400">No subjects defined for this event. Add subjects in the sidebar first.</p>
+          }
+
+          @if (pendingSuggestions().length > 0) {
+            <div class="border-t border-slate-200 pt-3">
+              <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Suggestions</p>
+              @if (subjects().length === 0) {
+                <p class="text-xs text-amber-600">Add subjects first, then assign suggestions.</p>
+              }
+              @for (s of pendingSuggestions(); track s.index) {
+                <div class="flex items-center gap-2 py-1"
+                     (mouseenter)="hoveredSuggestionIndex.set(s.index)"
+                     (mouseleave)="hoveredSuggestionIndex.set(null)">
+                  <span class="text-xs text-slate-700 flex-1">
+                    {{ s.species }}
+                    <span class="text-slate-400">({{ (s.confidence * 100).toFixed(0) }}%)</span>
+                  </span>
+                  <select
+                    class="text-xs rounded border border-violet-200 bg-white px-1.5 py-0.5 text-violet-700"
+                    (change)="acceptSuggestion(s.index, $any($event.target).value); $any($event.target).value = ''">
+                    <option value="">assign to…</option>
+                    @for (subject of subjects(); track subject.id) {
+                      <option [value]="subject.id">{{ subject.name ?? subject.species }}</option>
+                    }
+                  </select>
                   <button
                     type="button"
-                    class="text-xs text-slate-400 hover:text-red-500"
-                    (click)="clearBbox(subject.id)">clear bbox</button>
-                }
-              </div>
-            }
-          </label>
+                    class="text-slate-300 hover:text-red-400 text-xs leading-none"
+                    (click)="dismissSuggestion(s.index)">✕</button>
+                </div>
+              }
+            </div>
+          }
         </div>
-      }
-      @if (subjects().length === 0) {
-        <p class="text-xs text-slate-400">No subjects defined for this event. Add subjects in the sidebar first.</p>
-      }
-    </div>
 
-    <div class="flex justify-end gap-2 border-t border-slate-200 px-4 py-3">
-      <button
-        type="button"
-        class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-        (click)="onCancel()">Cancel</button>
-      <button
-        type="button"
-        class="text-sm px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-        (click)="onSave()">Save</button>
+        <div class="border-t border-slate-200 px-4 py-3 flex-none space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+              [disabled]="!hasPrev()"
+              (click)="onBack()">← Back</button>
+            <button
+              type="button"
+              class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+              [disabled]="!hasNext()"
+              (click)="onSkip()">Skip →</button>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              class="text-sm px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              (click)="onCancel()">Cancel</button>
+            <button
+              type="button"
+              class="text-sm px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 whitespace-nowrap"
+              (click)="onSave()">Save</button>
+            <button
+              type="button"
+              class="text-sm px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-default whitespace-nowrap"
+              [disabled]="!hasNext()"
+              (click)="onSaveAndNext()">Save & next →</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>

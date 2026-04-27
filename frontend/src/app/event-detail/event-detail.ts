@@ -1,10 +1,12 @@
 import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { ActivatedRoute, RouterLink } from '@angular/router';
-import { catchError, of, switchMap, timer } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { catchError, forkJoin, of, switchMap, timer } from 'rxjs';
 import {
+  ALLOWED_SPECIES,
   AnnotatedSubject,
+  AutoLabelSnapshotResult,
   CatcamApi,
   EventAnnotations,
   EventDetail as EventDetailModel,
@@ -22,6 +24,7 @@ import { SnapshotAnnotator } from '../annotation/snapshot-annotator';
 })
 export class EventDetail {
   private route = inject(ActivatedRoute);
+  private router = inject(Router);
   private api = inject(CatcamApi);
   private destroyRef = inject(DestroyRef);
 
@@ -33,9 +36,14 @@ export class EventDetail {
   });
   readonly isDirty = signal(false);
   protected readonly isSaving = signal(false);
-  protected readonly nameSuggestions = signal<string[]>([]);
+  protected readonly isConfirmingDelete = signal(false);
+  protected readonly isDeleting = signal(false);
+  protected readonly nameSuggestions = signal<Record<string, string[]>>({});
   protected readonly activeSnapshot = signal<MediaFile | null>(null);
   protected readonly lightbox = signal<MediaFile | null>(null);
+  protected readonly isAutoLabeling = signal(false);
+  protected readonly autoLabelSuggestions = signal<AutoLabelSnapshotResult[]>([]);
+  protected readonly autoLabelError = signal<string | null>(null);
 
   protected readonly neighbors = toSignal<EventNeighbors | null>(
     this.route.paramMap.pipe(
@@ -65,15 +73,20 @@ export class EventDetail {
         const id = p.get('id')!;
         this.currentEventId.set(id);
         this.isDirty.set(false);
+        this.isConfirmingDelete.set(false);
         this.activeSnapshot.set(null);
         this.annotations.set({ schemaVersion: 1, updatedAt: '', subjects: [], snapshots: [] });
+        this.autoLabelSuggestions.set([]);
+        this.autoLabelError.set(null);
 
         this.api.getAnnotations(id).pipe(catchError(() => of(null))).subscribe(a => {
           if (a) this.annotations.set(a);
         });
 
-        this.api.getSubjectNames().pipe(catchError(() => of(null))).subscribe(r => {
-          if (r) this.nameSuggestions.set(r.names);
+        forkJoin(
+          ALLOWED_SPECIES.map(s => this.api.getSubjectNames(s).pipe(catchError(() => of({ names: [] as string[] }))))
+        ).subscribe(results => {
+          this.nameSuggestions.set(Object.fromEntries(ALLOWED_SPECIES.map((s, i) => [s, results[i].names])));
         });
 
         return timer(0, 5000).pipe(switchMap(() => this.api.getEvent(id)));
@@ -116,19 +129,71 @@ export class EventDetail {
   }
 
   protected onAnnotatorSave(result: SnapshotAnnotation): void {
-    this.annotations.update(a => {
-      const existing = a.snapshots.filter(s => s.filename !== result.filename);
-      const snapshots = result.annotations.length > 0
-        ? [...existing, result]
-        : existing;
-      return { ...a, snapshots };
-    });
-    this.isDirty.set(true);
+    this.applyAnnotation(result);
     this.activeSnapshot.set(null);
+  }
+
+  protected onAnnotatorSaveAndNext(result: SnapshotAnnotation): void {
+    this.applyAnnotation(result);
+    this.navigateAnnotator('next');
+  }
+
+  protected onAnnotatorSkip(): void {
+    this.navigateAnnotator('next');
+  }
+
+  protected onAnnotatorBack(): void {
+    this.navigateAnnotator('prev');
   }
 
   protected onAnnotatorCancel(): void {
     this.activeSnapshot.set(null);
+  }
+
+  private applyAnnotation(result: SnapshotAnnotation): void {
+    this.annotations.update(a => {
+      const existing = a.snapshots.filter(s => s.filename !== result.filename);
+      const snapshots = result.annotations.length > 0 ? [...existing, result] : existing;
+      return { ...a, snapshots };
+    });
+    this.isDirty.set(true);
+  }
+
+  private navigateAnnotator(direction: 'next' | 'prev'): void {
+    const snapshots = this.detail()?.snapshots ?? [];
+    const current = this.activeSnapshot();
+    if (!current) return;
+    const idx = snapshots.findIndex(s => s.name === current.name);
+    if (idx < 0) return;
+    const target = direction === 'next' ? snapshots[idx + 1] : snapshots[idx - 1];
+    this.activeSnapshot.set(target ?? null);
+  }
+
+  protected readonly annotatorHasPrev = computed(() => {
+    const snapshots = this.detail()?.snapshots ?? [];
+    const current = this.activeSnapshot();
+    if (!current) return false;
+    return snapshots.findIndex(s => s.name === current.name) > 0;
+  });
+
+  protected readonly annotatorHasNext = computed(() => {
+    const snapshots = this.detail()?.snapshots ?? [];
+    const current = this.activeSnapshot();
+    if (!current) return false;
+    const idx = snapshots.findIndex(s => s.name === current.name);
+    return idx >= 0 && idx < snapshots.length - 1;
+  });
+
+  protected deleteEvent(): void {
+    const id = this.currentEventId();
+    if (!id) return;
+    this.isDeleting.set(true);
+    this.api.deleteEvent(id).pipe(
+      takeUntilDestroyed(this.destroyRef),
+    ).subscribe({
+      next: () => this.router.navigate(['/']),
+      error: () => this.isDeleting.set(false),
+    });
   }
 
   protected snapshotAnnotation(filename: string): SnapshotAnnotation | null {
@@ -138,5 +203,23 @@ export class EventDetail {
   protected hasAnnotation(filename: string): boolean {
     const a = this.snapshotAnnotation(filename);
     return (a?.annotations.length ?? 0) > 0;
+  }
+
+  protected suggestionsForSnapshot(filename: string): AutoLabelSnapshotResult | null {
+    return this.autoLabelSuggestions().find(s => s.filename === filename) ?? null;
+  }
+
+  protected onAutoLabel(): void {
+    const id = this.currentEventId();
+    if (!id) return;
+    this.isAutoLabeling.set(true);
+    this.autoLabelError.set(null);
+    this.api.autoLabel(id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: r => { this.autoLabelSuggestions.set(r.snapshots); this.isAutoLabeling.set(false); },
+      error: () => {
+        this.autoLabelError.set('Auto-label failed — is the GPU service running?');
+        this.isAutoLabeling.set(false);
+      },
+    });
   }
 }

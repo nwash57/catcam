@@ -118,6 +118,52 @@
           </button>
         </div>
       }
+
+      <div class="mt-4 pt-3 border-t border-slate-200">
+        <button
+          type="button"
+          class="w-full rounded-lg border border-violet-200 text-violet-700 text-sm py-1.5 hover:bg-violet-50 disabled:opacity-50"
+          [disabled]="isAutoLabeling()"
+          (click)="onAutoLabel()">
+          {{ isAutoLabeling() ? 'Auto-labeling…' : 'Auto-label all snapshots' }}
+        </button>
+        @if (autoLabelError()) {
+          <p class="mt-1.5 text-xs text-red-600">{{ autoLabelError() }}</p>
+        }
+        @if (autoLabelSuggestions().length > 0 && !isAutoLabeling()) {
+          <p class="mt-1.5 text-xs text-violet-600">Suggestions ready — open a snapshot to assign them.</p>
+        }
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-slate-200">
+        @if (!isConfirmingDelete()) {
+          <button
+            type="button"
+            class="w-full rounded-lg border border-red-200 text-red-600 text-sm py-1.5 hover:bg-red-50 disabled:opacity-50"
+            [disabled]="isDeleting()"
+            (click)="isConfirmingDelete.set(true)">
+            Delete event
+          </button>
+        } @else {
+          <p class="text-xs text-slate-600 mb-2">Permanently delete all files for this event?</p>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="flex-1 rounded-lg bg-red-600 text-white text-sm py-1.5 hover:bg-red-700 disabled:opacity-50"
+              [disabled]="isDeleting()"
+              (click)="deleteEvent()">
+              {{ isDeleting() ? 'Deleting…' : 'Yes, delete' }}
+            </button>
+            <button
+              type="button"
+              class="flex-1 rounded-lg border border-slate-200 text-slate-600 text-sm py-1.5 hover:bg-slate-50"
+              [disabled]="isDeleting()"
+              (click)="isConfirmingDelete.set(false)">
+              Cancel
+            </button>
+          </div>
+        }
+      </div>
     </aside>
   </div>
 
@@ -135,7 +181,13 @@
       [imageUrl]="snapshotUrl(snap)"
       [subjects]="annotations().subjects"
       [existingAnnotation]="snapshotAnnotation(snap.name)"
+      [autoLabelSuggestions]="suggestionsForSnapshot(snap.name)"
+      [hasPrev]="annotatorHasPrev()"
+      [hasNext]="annotatorHasNext()"
       (save)="onAnnotatorSave($event)"
+      (saveAndNext)="onAnnotatorSaveAndNext($event)"
+      (skip)="onAnnotatorSkip()"
+      (back)="onAnnotatorBack()"
       (cancel)="onAnnotatorCancel()" />
   }
 } @else {
