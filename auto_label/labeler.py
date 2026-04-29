@@ -8,8 +8,9 @@ class AutoLabeler:
 
     def __init__(self, model: str = "yolov8x-worldv2.pt", conf: float = 0.25):
         if Path(model).is_absolute():
-            # Fine-tuned model — classes are embedded from training, no set_classes needed
+            # Fine-tuned model — class names are embedded; may be species or individual subject names
             self.model = YOLO(model)
+            self.CLASSES = None
         else:
             # Stock YOLOWorld — use open-vocab detection with explicit class list
             self.model = YOLOWorld(model)
@@ -18,12 +19,13 @@ class AutoLabeler:
 
     def label_file(self, image_path: str) -> list[dict]:
         results = self.model(image_path, conf=self.conf, verbose=False)[0]
+        names = self.CLASSES if self.CLASSES else results.names
         h, w = results.orig_shape
         out = []
         for box in results.boxes:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             out.append({
-                "species": self.CLASSES[int(box.cls[0])],
+                "species": names[int(box.cls[0])],
                 "confidence": float(box.conf[0]),
                 "bbox": {
                     "x": x1 / w,

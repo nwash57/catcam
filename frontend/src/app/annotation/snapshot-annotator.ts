@@ -52,6 +52,25 @@ export class SnapshotAnnotator implements OnInit {
       return found ?? { subjectId: subject.id, includeInTraining: false, boundingBox: null };
     });
     this.rows.set(initial);
+    if (!existing) {
+      this.autoAssignNamedSuggestions();
+    }
+  }
+
+  private autoAssignNamedSuggestions(): void {
+    const detections = this.autoLabelSuggestions()?.detections ?? [];
+    for (const subject of this.subjects()) {
+      if (!subject.name) continue;
+      const name = subject.name.toLowerCase();
+      let bestIndex = -1, bestConf = -1;
+      detections.forEach((det, i) => {
+        if (!this.assignedSuggestions().has(i) && det.species.toLowerCase() === name && det.confidence > bestConf) {
+          bestIndex = i;
+          bestConf = det.confidence;
+        }
+      });
+      if (bestIndex >= 0) this.acceptSuggestion(bestIndex, subject.id);
+    }
   }
 
   protected colorFor(subjectId: string): string {
