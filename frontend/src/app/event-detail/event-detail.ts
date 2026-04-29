@@ -211,21 +211,22 @@ export class EventDetail {
   }
 
   private autoAddSubjectsFromDetections(snapshots: AutoLabelSnapshotResult[]): void {
-    const detected = new Set(snapshots.flatMap(s => s.detections.map(d => d.species as string)));
+    const knownSpecies = new Set(ALLOWED_SPECIES as readonly string[]);
+    const detectedNames = new Set(
+      snapshots.flatMap(s => s.detections.map(d => d.species as string))
+               .filter(v => !knownSpecies.has(v))
+    );
+    if (detectedNames.size === 0) return;
+
     const subjects = this.annotations().subjects;
     const newSubjects: AnnotatedSubject[] = [];
 
-    for (const value of detected) {
-      const isSpecies = (ALLOWED_SPECIES as readonly string[]).includes(value);
-      const exists = isSpecies
-        ? subjects.some(s => s.species === value && !s.name)
-        : subjects.some(s => s.name?.toLowerCase() === value.toLowerCase());
+    for (const name of detectedNames) {
+      const exists = subjects.some(s => s.name?.toLowerCase() === name.toLowerCase())
+        || newSubjects.some(s => s.name?.toLowerCase() === name.toLowerCase());
       if (exists) continue;
-
       const id = `s${subjects.length + newSubjects.length + 1}_${Date.now()}`;
-      newSubjects.push(isSpecies
-        ? { id, species: value as Species, name: null }
-        : { id, species: 'cat', name: value });
+      newSubjects.push({ id, species: 'cat', name });
     }
 
     if (newSubjects.length > 0) {
