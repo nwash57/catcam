@@ -8,13 +8,16 @@ class AutoLabeler:
 
     def __init__(self, model: str = "yolov8x-worldv2.pt", conf: float = 0.25):
         if Path(model).is_absolute():
-            # Fine-tuned model — class names are embedded; may be species or individual subject names
+            if not Path(model).is_file():
+                raise FileNotFoundError(f"Model file not found: {model}")
+            print(f"[auto_label] Loading fine-tuned model: {model}")
             self.model = YOLO(model)
             self.CLASSES = None
         else:
-            # Stock YOLOWorld — use open-vocab detection with explicit class list
+            print(f"[auto_label] Loading stock YOLOWorld model: {model}")
             self.model = YOLOWorld(model)
             self.model.set_classes(self.CLASSES)
+        print(f"[auto_label] Model ready. Classes: {self.CLASSES or list(self.model.names.values())}")
         self.conf = conf
 
     def label_file(self, image_path: str) -> list[dict]:
