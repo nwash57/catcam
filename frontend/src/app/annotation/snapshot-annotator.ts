@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, input, output, signal } from '@angular/core';
+import { Component, OnChanges, OnInit, SimpleChanges, computed, input, output, signal } from '@angular/core';
 import { AnnotatedSubject, AutoLabelSnapshotResult, BoundingBox, SnapshotAnnotation, SubjectAnnotation } from '../api';
 import { BboxCanvas, DrawnBox, PreviewBox } from './bbox-canvas';
 
@@ -9,7 +9,7 @@ const SUBJECT_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
   imports: [BboxCanvas],
   templateUrl: './snapshot-annotator.html',
 })
-export class SnapshotAnnotator implements OnInit {
+export class SnapshotAnnotator implements OnInit, OnChanges {
   readonly filename = input.required<string>();
   readonly imageUrl = input.required<string>();
   readonly subjects = input.required<AnnotatedSubject[]>();
@@ -46,11 +46,25 @@ export class SnapshotAnnotator implements OnInit {
   });
 
   ngOnInit(): void {
+    this.initState();
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['filename'] && !changes['filename'].firstChange) {
+      this.initState();
+    }
+  }
+
+  private initState(): void {
     const existing = this.existingAnnotation();
     const initial = this.subjects().map(subject => {
       const found = existing?.annotations.find(a => a.subjectId === subject.id);
       return found ?? { subjectId: subject.id, includeInTraining: false, boundingBox: null };
     });
+    this.activeSubjectId.set(null);
+    this.assignedSuggestions.set(new Set());
+    this.hoveredSuggestionIndex.set(null);
+    this.suggestionSourceMap.set(new Map());
     this.rows.set(initial);
     if (!existing) {
       this.autoAssignNamedSuggestions();

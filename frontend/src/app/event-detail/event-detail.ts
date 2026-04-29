@@ -13,6 +13,7 @@ import {
   EventNeighbors,
   MediaFile,
   SnapshotAnnotation,
+  Species,
 } from '../api';
 import { SubjectEditor } from '../annotation/subject-editor';
 import { SnapshotAnnotator } from '../annotation/snapshot-annotator';
@@ -209,13 +210,41 @@ export class EventDetail {
     return this.autoLabelSuggestions().find(s => s.filename === filename) ?? null;
   }
 
+  private autoAddSubjectsFromDetections(snapshots: AutoLabelSnapshotResult[]): void {
+    const detected = new Set(snapshots.flatMap(s => s.detections.map(d => d.species as string)));
+    const subjects = this.annotations().subjects;
+    const newSubjects: AnnotatedSubject[] = [];
+
+    for (const value of detected) {
+      const isSpecies = (ALLOWED_SPECIES as readonly string[]).includes(value);
+      const exists = isSpecies
+        ? subjects.some(s => s.species === value && !s.name)
+        : subjects.some(s => s.name?.toLowerCase() === value.toLowerCase());
+      if (exists) continue;
+
+      const id = `s${subjects.length + newSubjects.length + 1}_${Date.now()}`;
+      newSubjects.push(isSpecies
+        ? { id, species: value as Species, name: null }
+        : { id, species: 'cat', name: value });
+    }
+
+    if (newSubjects.length > 0) {
+      this.annotations.update(a => ({ ...a, subjects: [...a.subjects, ...newSubjects] }));
+      this.isDirty.set(true);
+    }
+  }
+
   protected onAutoLabel(): void {
     const id = this.currentEventId();
     if (!id) return;
     this.isAutoLabeling.set(true);
     this.autoLabelError.set(null);
     this.api.autoLabel(id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: r => { this.autoLabelSuggestions.set(r.snapshots); this.isAutoLabeling.set(false); },
+      next: r => {
+        this.autoLabelSuggestions.set(r.snapshots);
+        this.isAutoLabeling.set(false);
+        this.autoAddSubjectsFromDetections(r.snapshots);
+      },
       error: () => {
         this.autoLabelError.set('Auto-label failed — is the GPU service running?');
         this.isAutoLabeling.set(false);
