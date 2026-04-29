@@ -1,12 +1,19 @@
-from ultralytics import YOLOWorld
+from pathlib import Path
+
+from ultralytics import YOLO, YOLOWorld
 
 
 class AutoLabeler:
     CLASSES = ["cat", "dog", "raccoon", "possum", "deer"]
 
     def __init__(self, model: str = "yolov8x-worldv2.pt", conf: float = 0.25):
-        self.model = YOLOWorld(model)
-        self.model.set_classes(self.CLASSES)
+        if Path(model).is_absolute():
+            # Fine-tuned model — classes are embedded from training, no set_classes needed
+            self.model = YOLO(model)
+        else:
+            # Stock YOLOWorld — use open-vocab detection with explicit class list
+            self.model = YOLOWorld(model)
+            self.model.set_classes(self.CLASSES)
         self.conf = conf
 
     def label_file(self, image_path: str) -> list[dict]:

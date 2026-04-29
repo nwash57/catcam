@@ -48,6 +48,29 @@ services:
       - "8090:8090"
     restart: unless-stopped
 
+  # GPU training service — fine-tunes both YOLOv8 and YOLOWorld on annotated snapshots.
+  # Run manually: docker compose --profile train run --rm training
+  # Outputs:
+  #   models/trained/catcam_yolov8n_best.pt        → copy to Pi, use with --model
+  #   models/trained/catcam_yolov8x-worldv2_best.pt → set AUTOLABEL_MODEL to this path
+  # Env overrides: TRAIN_BASE_MODELS (comma-separated), TRAIN_EPOCHS (default 100)
+  training:
+    profiles: [train]
+    build:
+      context: ./train
+    runtime: nvidia
+    shm_size: '2gb'
+    environment:
+      BASE_MODELS: ${TRAIN_BASE_MODELS:-yolov8n.pt,yolov8x-worldv2.pt}
+      EPOCHS: ${TRAIN_EPOCHS:-100}
+      TRAIN_VRAM_FRACTION: ${TRAIN_VRAM_FRACTION:-0.9}
+      NVIDIA_VISIBLE_DEVICES: "0"
+      YOLO_CONFIG_DIR: /models
+    volumes:
+      - ${CAPTURES_DIR:-./captures}:/captures:ro
+      - ./models:/models
+      - ./datasets:/datasets
+
   frontend:
     profiles: [full]
     build:
