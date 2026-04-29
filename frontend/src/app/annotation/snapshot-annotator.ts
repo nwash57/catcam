@@ -73,16 +73,38 @@ export class SnapshotAnnotator implements OnInit, OnChanges {
 
   private autoAssignNamedSuggestions(): void {
     const detections = this.autoLabelSuggestions()?.detections ?? [];
+    if (!detections.length) return;
+
+    // Pass 1: exact name match (retrained model with named classes)
     for (const subject of this.subjects()) {
       if (!subject.name) continue;
       const name = subject.name.toLowerCase();
       let bestIndex = -1, bestConf = -1;
       detections.forEach((det, i) => {
         if (!this.assignedSuggestions().has(i) && det.species.toLowerCase() === name && det.confidence > bestConf) {
-          bestIndex = i;
-          bestConf = det.confidence;
+          bestIndex = i; bestConf = det.confidence;
         }
       });
+      if (bestIndex >= 0) this.acceptSuggestion(bestIndex, subject.id);
+    }
+
+    // Pass 2: for subjects still without a bbox, assign best remaining suggestion
+    // (species-preferred, then any) — handles removed/phantom subjects rerouting to what's left
+    for (const subject of this.subjects()) {
+      if (this.getBbox(subject.id)) continue;
+      let bestIndex = -1, bestConf = -1;
+      detections.forEach((det, i) => {
+        if (!this.assignedSuggestions().has(i) && (det.species as string) === subject.species && det.confidence > bestConf) {
+          bestIndex = i; bestConf = det.confidence;
+        }
+      });
+      if (bestIndex < 0) {
+        detections.forEach((det, i) => {
+          if (!this.assignedSuggestions().has(i) && det.confidence > bestConf) {
+            bestIndex = i; bestConf = det.confidence;
+          }
+        });
+      }
       if (bestIndex >= 0) this.acceptSuggestion(bestIndex, subject.id);
     }
   }
