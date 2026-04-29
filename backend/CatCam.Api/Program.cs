@@ -35,29 +35,43 @@ if (app.Environment.IsDevelopment())
 var contentTypes = new FileExtensionContentTypeProvider();
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
-app.MapGet("/api/events", (int? skip, int? take) =>
+app.MapGet("/api/events", (int? skip, int? take, string? species, string? name) =>
 {
     var skipN = Math.Max(0, skip ?? 0);
     var takeN = Math.Clamp(take ?? 48, 1, 200);
+    var hasFilter = !string.IsNullOrWhiteSpace(species) || !string.IsNullOrWhiteSpace(name);
 
     if (!Directory.Exists(capturesDir))
         return Results.Ok(new EventPage(Array.Empty<EventSummary>(), 0));
 
     // Directory names are `event_YYYYMMDD_HHMMSS`, so ordinal desc sort == newest first.
-    // Sort before reading sidecars so we only parse event.json for the current page.
     var dirs = new DirectoryInfo(capturesDir)
         .EnumerateDirectories("event_*")
         .OrderByDescending(d => d.Name, StringComparer.Ordinal)
         .ToArray();
 
-    var items = dirs
-        .Skip(skipN)
-        .Take(takeN)
+    if (!hasFilter)
+    {
+        // Fast path: only read sidecars for the current page.
+        var items = dirs
+            .Skip(skipN)
+            .Take(takeN)
+            .Select(dir => BuildSummary(dir, jsonOptions))
+            .OrderByDescending(e => e.StartedAt)
+            .ToArray();
+        return Results.Ok(new EventPage(items, dirs.Length));
+    }
+
+    // Filtered path: read all summaries (including annotations) then paginate.
+    var filtered = dirs
         .Select(dir => BuildSummary(dir, jsonOptions))
         .OrderByDescending(e => e.StartedAt)
+        .Where(e =>
+            (string.IsNullOrWhiteSpace(species) || e.Species.Any(s => s.Equals(species, StringComparison.OrdinalIgnoreCase)))
+            && (string.IsNullOrWhiteSpace(name) || e.SubjectNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase))))
         .ToArray();
 
-    return Results.Ok(new EventPage(items, dirs.Length));
+    return Results.Ok(new EventPage(filtered.Skip(skipN).Take(takeN).ToArray(), filtered.Length));
 });
 
 app.MapGet("/api/events/{id}", (string id) =>
@@ -264,6 +278,7 @@ static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
             {
                 var pendingVideo = string.IsNullOrEmpty(sidecar.VideoFile)
                     && File.Exists(Path.Combine(dir.FullName, "recording-raw.mp4"));
+                var annotations = ReadAnnotations(dir, json);
                 return new EventSummary(
                     Id: sidecar.Id ?? dir.Name,
                     StartedAt: sidecar.StartedAt ?? dir.CreationTimeUtc,
@@ -275,7 +290,8 @@ static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
                     Species: (IReadOnlyList<string>?)sidecar.Species ?? Array.Empty<string>(),
                     InProgress: sidecar.EndedAt is null,
                     PendingVideo: pendingVideo,
-                    AnnotatedSubjectCount: ReadAnnotations(dir, json).Subjects.Count);
+                    AnnotatedSubjectCount: annotations.Subjects.Count,
+                    SubjectNames: ExtractSubjectNames(annotations));
             }
         }
         catch
@@ -291,6 +307,7 @@ static EventSummary InferSummary(DirectoryInfo dir, JsonSerializerOptions json)
 {
     var videoFile = dir.EnumerateFiles("recording.mp4").FirstOrDefault();
     var rawFile = dir.EnumerateFiles("recording-raw.mp4").FirstOrDefault();
+    var annotations = ReadAnnotations(dir, json);
     return new EventSummary(
         Id: dir.Name,
         StartedAt: dir.CreationTimeUtc,
@@ -302,8 +319,16 @@ static EventSummary InferSummary(DirectoryInfo dir, JsonSerializerOptions json)
         Species: Array.Empty<string>(),
         InProgress: true,
         PendingVideo: videoFile is null && rawFile is not null,
-        AnnotatedSubjectCount: ReadAnnotations(dir, json).Subjects.Count);
+        AnnotatedSubjectCount: annotations.Subjects.Count,
+        SubjectNames: ExtractSubjectNames(annotations));
 }
+
+static IReadOnlyList<string> ExtractSubjectNames(EventAnnotations annotations) =>
+    annotations.Subjects
+        .Select(s => s.Name)
+        .Where(n => !string.IsNullOrWhiteSpace(n))
+        .Select(n => n!)
+        .ToArray();
 
 static int CountSnapshots(DirectoryInfo dir) =>
     dir.EnumerateFiles("*.jpg").Count()
@@ -350,7 +375,8 @@ record EventSummary(
     IReadOnlyList<string> Species,
     bool InProgress,
     bool PendingVideo,
-    int AnnotatedSubjectCount);
+    int AnnotatedSubjectCount,
+    IReadOnlyList<string> SubjectNames);
 
 record MediaFile(string Name, long SizeBytes);
 

@@ -52,6 +52,7 @@ export interface EventSummary {
   inProgress: boolean;
   pendingVideo: boolean;
   annotatedSubjectCount: number;
+  subjectNames: string[];
 }
 
 export interface MediaFile {
@@ -136,8 +137,10 @@ export interface DeviceMetrics {
 export class CatcamApi {
   private http = inject(HttpClient);
 
-  listEvents(skip = 0, take = 48): Observable<EventPage> {
-    const params = new HttpParams().set('skip', skip).set('take', take);
+  listEvents(skip = 0, take = 48, species?: string, name?: string): Observable<EventPage> {
+    let params = new HttpParams().set('skip', skip).set('take', take);
+    if (species) params = params.set('species', species);
+    if (name) params = params.set('name', name);
     return this.http.get<EventPage>('/api/events', { params });
   }
 

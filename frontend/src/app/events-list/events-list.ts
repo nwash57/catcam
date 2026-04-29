@@ -2,8 +2,8 @@ import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { EMPTY, catchError, switchMap, tap } from 'rxjs';
-import { CatcamApi, EventPage, EventSummary } from '../api';
+import { EMPTY, catchError, map, switchMap, tap } from 'rxjs';
+import { ALLOWED_SPECIES, CatcamApi, EventPage, EventSummary, Species } from '../api';
 
 const PAGE_SIZE = 48;
 
@@ -15,21 +15,41 @@ const PAGE_SIZE = 48;
 export class EventsList {
   private api = inject(CatcamApi);
 
+  protected readonly allowedSpecies = ALLOWED_SPECIES;
   protected readonly pageSize = PAGE_SIZE;
   protected readonly skip = signal(0);
   protected readonly query = signal('');
   protected readonly sortNewest = signal(true);
+  protected readonly speciesFilter = signal('');
+  protected readonly nameFilter = signal('');
   protected readonly loading = signal(false);
   protected readonly error = signal(false);
 
+  protected readonly availableNames = toSignal(
+    toObservable(this.speciesFilter).pipe(
+      switchMap(species =>
+        this.api.getSubjectNames(species ? species as Species : undefined).pipe(
+          map(r => r.names),
+        ),
+      ),
+    ),
+    { initialValue: [] as string[] },
+  );
+
+  private readonly fetchParams = computed(() => ({
+    skip: this.skip(),
+    species: this.speciesFilter(),
+    name: this.nameFilter(),
+  }));
+
   private readonly page = toSignal(
-    toObservable(this.skip).pipe(
+    toObservable(this.fetchParams).pipe(
       tap(() => {
         this.loading.set(true);
         this.error.set(false);
       }),
-      switchMap(s =>
-        this.api.listEvents(s, PAGE_SIZE).pipe(
+      switchMap(({ skip, species, name }) =>
+        this.api.listEvents(skip, PAGE_SIZE, species || undefined, name || undefined).pipe(
           catchError(() => {
             this.loading.set(false);
             this.error.set(true);
@@ -79,6 +99,17 @@ export class EventsList {
 
   protected onQueryInput(event: Event) {
     this.query.set((event.target as HTMLInputElement).value);
+  }
+
+  protected onSpeciesChange(event: Event) {
+    this.speciesFilter.set((event.target as HTMLSelectElement).value);
+    this.nameFilter.set('');
+    this.skip.set(0);
+  }
+
+  protected onNameChange(event: Event) {
+    this.nameFilter.set((event.target as HTMLSelectElement).value);
+    this.skip.set(0);
   }
 
   protected prev() {

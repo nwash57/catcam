@@ -1,4 +1,26 @@
 <div class="flex flex-wrap items-center gap-3 mb-4">
+  <select
+    class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+    [value]="speciesFilter()"
+    (change)="onSpeciesChange($event)">
+    <option value="">All species</option>
+    @for (s of allowedSpecies; track s) {
+      <option [value]="s">{{ s }}</option>
+    }
+  </select>
+
+  @if (availableNames().length > 0) {
+    <select
+      class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400"
+      [value]="nameFilter()"
+      (change)="onNameChange($event)">
+      <option value="">All names</option>
+      @for (n of availableNames(); track n) {
+        <option [value]="n">{{ n }}</option>
+      }
+    </select>
+  }
+
   <input
     type="text"
     placeholder="Search this page…"
@@ -83,7 +105,10 @@
             @for (s of e.species; track s) {
               <span class="rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">{{ s }}</span>
             }
-            @if (e.annotatedSubjectCount > 0) {
+            @for (n of e.subjectNames; track n) {
+              <span class="rounded-full bg-blue-100 text-blue-800 text-xs px-2 py-0.5">{{ n }}</span>
+            }
+            @if (e.annotatedSubjectCount > 0 && e.subjectNames.length === 0) {
               <span class="rounded-full bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5">
                 {{ e.annotatedSubjectCount }} labeled
               </span>
