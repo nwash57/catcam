@@ -50,7 +50,12 @@ export class SnapshotAnnotator implements OnInit, OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['filename'] && !changes['filename'].firstChange) {
+    const filenameChanged = changes['filename'] && !changes['filename'].firstChange;
+    const annotationLateLoaded = changes['existingAnnotation']
+      && !changes['existingAnnotation'].firstChange
+      && !changes['existingAnnotation'].previousValue
+      && changes['existingAnnotation'].currentValue;
+    if (filenameChanged || annotationLateLoaded) {
       this.initState();
     }
   }

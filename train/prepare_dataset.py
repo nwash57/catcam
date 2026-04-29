@@ -23,7 +23,7 @@ SPECIES = {"cat", "dog", "raccoon", "possum", "deer"}
 
 
 def get_label(subject: dict) -> str:
-    name = (subject.get("name") or "").strip().lower()
+    name = (subject.get("name") or "").strip()
     return name if name else subject["species"]
 
 
