@@ -427,3 +427,7 @@ record AutoLabelSnapshotResult(
 
 record AutoLabelResponse(
     [property: JsonPropertyName("snapshots")] List<AutoLabelSnapshotResult> Snapshots);
+
+// Exposes the implicit entry-point class so WebApplicationFactory<Program> can
+// boot the app in-memory for integration tests.
+public partial class Program;

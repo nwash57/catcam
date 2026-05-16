@@ -17,6 +17,13 @@ bin/
 obj/
 *.user
 *.suo
+TestResults/
+
+# Python tests
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
 
 # Node / Angular
 node_modules/
