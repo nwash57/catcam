@@ -1,5 +1,10 @@
 **/__pycache__/*
 captures/*
+datasets/
+models/Ultralytics/
+models/trained/**/
+models/trained/*
+!models/trained/*_best.pt
 
 # IDE
 .idea/
@@ -17,3 +22,5 @@ obj/
 node_modules/
 dist/
 .angular/
+
+.env
