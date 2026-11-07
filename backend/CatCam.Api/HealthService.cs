@@ -23,7 +23,7 @@ public sealed record HealthReport(
 /// it writes lands somewhere nobody reads. Each check below corresponds to a way
 /// that has actually happened or plausibly could.
 /// </summary>
-public sealed class HealthService(MetricsReader metrics, IConfiguration config)
+internal sealed class HealthService(MetricsReader metrics, EventIndex index, IConfiguration config)
 {
     public const string Ok = "ok";
     public const string Warn = "warn";
@@ -42,7 +42,8 @@ public sealed class HealthService(MetricsReader metrics, IConfiguration config)
     public async Task<HealthReport> CheckAsync(string capturesDir, CancellationToken ct = default)
     {
         var device = await metrics.ReadAsync(capturesDir, config["Pi:MetricsUrl"]);
-        var lastEvent = NewestEventTime(capturesDir);
+        await index.WhenReadyAsync(ct);
+        var lastEvent = NewestEventTime(index);
         var checks = new List<HealthCheck>
         {
             CheckFreshness(lastEvent),
@@ -69,17 +70,11 @@ public sealed class HealthService(MetricsReader metrics, IConfiguration config)
     /// Names are `event_yyyyMMdd_HHmmss`; mtimes on a network share get rewritten
     /// by copies and rsyncs, so the name is the more trustworthy clock.
     /// </summary>
-    private static DateTimeOffset? NewestEventTime(string capturesDir)
+    private static DateTimeOffset? NewestEventTime(EventIndex index)
     {
-        if (!Directory.Exists(capturesDir)) return null;
-
-        var newest = new DirectoryInfo(capturesDir)
-            .EnumerateDirectories("event_*")
-            .Select(d => d.Name)
-            .OrderByDescending(n => n, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (newest is null) return null;
+        var events = index.Events; // newest first
+        if (events.Count == 0) return null;
+        var newest = events[0].Summary.Id;
 
         var stamp = newest.Length > 6 ? newest[6..] : null;
         return DateTimeOffset.TryParseExact(

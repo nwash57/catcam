@@ -244,7 +244,11 @@ public record DeviceMetrics(
     ThrottledInfo? Throttled,
     PiDiskInfo? RootDisk = null,
     CapturesInfo? Captures = null,
-    bool? PiReachable = null);
+    bool? PiReachable = null,
+    CapturesUsage? CapturesUsage = null);
+
+/// <summary>Space taken by the captures directory itself, as opposed to the whole disk.</summary>
+public record CapturesUsage(long TotalBytes, int EventCount, DateTimeOffset? ScannedAt);
 
 public record LoadAverage(double OneMinute, double FiveMinute, double FifteenMinute);
 
