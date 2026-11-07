@@ -4,20 +4,18 @@ using System.Text.Json.Serialization;
 
 namespace CatCam.Api;
 
-public sealed class TranscodeService : BackgroundService
+internal sealed class TranscodeService : BackgroundService
 {
     private readonly ILogger<TranscodeService> _logger;
     private readonly string _capturesDir;
+    private readonly EventIndex _index;
     private readonly JsonSerializerOptions _json;
 
-    public TranscodeService(ILogger<TranscodeService> logger, IConfiguration config, IHostEnvironment env)
+    public TranscodeService(ILogger<TranscodeService> logger, CapturesDirectory captures, EventIndex index)
     {
         _logger = logger;
-        var configured = config["Captures:Directory"]
-            ?? throw new InvalidOperationException("Captures:Directory is not configured.");
-        _capturesDir = Path.IsPathRooted(configured)
-            ? configured
-            : Path.GetFullPath(Path.Combine(env.ContentRootPath, configured));
+        _capturesDir = captures.Path;
+        _index = index;
 
         _json = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     }
@@ -42,12 +40,20 @@ public sealed class TranscodeService : BackgroundService
 
     private async Task ProcessPendingAsync(string ffmpeg, CancellationToken ct)
     {
-        if (!Directory.Exists(_capturesDir)) return;
+        // From the index rather than a recursive walk of the whole tree every 30s.
+        await _index.WhenReadyAsync(ct);
+        var pending = _index.Events
+            .Where(e => e.Summary.PendingVideo && !e.Summary.InProgress)
+            .Select(e => e.Summary.Id)
+            .ToArray();
 
-        foreach (var rawPath in Directory.EnumerateFiles(_capturesDir, "recording-raw.mp4", SearchOption.AllDirectories))
+        foreach (var id in pending)
         {
             if (ct.IsCancellationRequested) break;
+            var rawPath = Path.Combine(_capturesDir, id, "recording-raw.mp4");
+            if (!File.Exists(rawPath)) continue;
             await TryTranscodeAsync(rawPath, ffmpeg, ct);
+            _index.Refresh(id);
         }
     }
 

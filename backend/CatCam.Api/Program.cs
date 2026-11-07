@@ -7,6 +7,12 @@ using Microsoft.AspNetCore.StaticFiles;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+// Resolved from the built configuration, not builder.Configuration, so overrides
+// applied later (e.g. by the integration-test factory) take effect.
+builder.Services.AddSingleton(sp => CapturesDirectory.Resolve(
+    sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<IHostEnvironment>()));
+builder.Services.AddSingleton<EventIndex>();
+builder.Services.AddHostedService<EventIndexer>();
 builder.Services.AddSingleton<MetricsReader>();
 builder.Services.AddSingleton<HealthService>();
 builder.Services.AddHostedService<TranscodeService>();
@@ -29,7 +35,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-var capturesDir = ResolveCapturesDirectory(app);
+var capturesDir = app.Services.GetRequiredService<CapturesDirectory>().Path;
 app.Logger.LogInformation("Serving captures from {Dir}", capturesDir);
 
 if (app.Environment.IsDevelopment())
@@ -41,53 +47,36 @@ if (app.Environment.IsDevelopment())
 var contentTypes = new FileExtensionContentTypeProvider();
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
-app.MapGet("/api/events", (int? skip, int? take, string? species, string? name) =>
+app.MapGet("/api/events", async (int? skip, int? take, string? species, string? name, EventIndex index, CancellationToken ct) =>
 {
+    await index.WhenReadyAsync(ct);
     var skipN = Math.Max(0, skip ?? 0);
     var takeN = Math.Clamp(take ?? 48, 1, 200);
-    var hasFilter = !string.IsNullOrWhiteSpace(species) || !string.IsNullOrWhiteSpace(name);
 
-    if (!Directory.Exists(capturesDir))
-        return Results.Ok(new EventPage(Array.Empty<EventSummary>(), 0));
-
-    // Directory names are `event_YYYYMMDD_HHMMSS`, so ordinal desc sort == newest first.
-    var dirs = new DirectoryInfo(capturesDir)
-        .EnumerateDirectories("event_*")
-        .OrderByDescending(d => d.Name, StringComparer.Ordinal)
-        .ToArray();
-
-    if (!hasFilter)
-    {
-        // Fast path: only read sidecars for the current page.
-        var items = dirs
-            .Skip(skipN)
-            .Take(takeN)
-            .Select(dir => BuildSummary(dir, jsonOptions))
-            .OrderByDescending(e => e.StartedAt)
-            .ToArray();
-        return Results.Ok(new EventPage(items, dirs.Length));
-    }
-
-    // Filtered path: read all summaries (including annotations) then paginate.
-    var filtered = dirs
-        .Select(dir => BuildSummary(dir, jsonOptions))
-        .OrderByDescending(e => e.StartedAt)
+    var matching = index.Events
+        .Select(e => e.Summary)
         .Where(e =>
             (string.IsNullOrWhiteSpace(species) || e.Species.Any(s => s.Equals(species, StringComparison.OrdinalIgnoreCase)))
             && (string.IsNullOrWhiteSpace(name) || e.SubjectNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase))))
         .ToArray();
 
-    return Results.Ok(new EventPage(filtered.Skip(skipN).Take(takeN).ToArray(), filtered.Length));
+    return Results.Ok(new EventPage(matching.Skip(skipN).Take(takeN).ToArray(), matching.Length));
 });
 
-app.MapGet("/api/events/{id}", (string id) =>
+app.MapGet("/api/events/{id}", async (string id, EventIndex index, CancellationToken ct) =>
 {
     if (!IsSafeSegment(id)) return Results.BadRequest();
 
     var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
     if (!dir.Exists) return Results.NotFound();
 
-    var summary = BuildSummary(dir, jsonOptions);
+    await index.WhenReadyAsync(ct);
+    // Polled while an event is in progress, so rescan rather than wait for the
+    // next reconcile — the page should show snapshots as they arrive.
+    var summary = index.Get(id) is { Summary.InProgress: false } known
+        ? known.Summary
+        : index.Refresh(id)?.Summary;
+    if (summary is null) return Results.NotFound();
     var snapshots = dir.EnumerateFiles("*.jpg")
         .Concat(dir.EnumerateFiles("*.jpeg"))
         .Concat(dir.EnumerateFiles("*.png"))
@@ -98,25 +87,21 @@ app.MapGet("/api/events/{id}", (string id) =>
     return Results.Ok(new EventDetail(summary, snapshots));
 });
 
-app.MapGet("/api/events/{id}/neighbors", (string id) =>
+app.MapGet("/api/events/{id}/neighbors", async (string id, EventIndex index, CancellationToken ct) =>
 {
     if (!IsSafeSegment(id)) return Results.BadRequest();
 
-    if (!Directory.Exists(capturesDir))
-        return Results.Ok(new EventNeighbors(null, null));
-
-    // Directory names are `event_YYYYMMDD_HHMMSS`, ordinal desc = newest first.
-    var dirs = new DirectoryInfo(capturesDir)
-        .EnumerateDirectories("event_*")
-        .OrderByDescending(d => d.Name, StringComparer.Ordinal)
-        .Select(d => d.Name)
-        .ToArray();
-
-    var idx = Array.IndexOf(dirs, id);
+    await index.WhenReadyAsync(ct);
+    var events = index.Events; // newest first
+    var idx = -1;
+    for (var i = 0; i < events.Count; i++)
+    {
+        if (events[i].Summary.Id == id) { idx = i; break; }
+    }
     if (idx < 0) return Results.NotFound();
 
-    var newer = idx > 0 ? dirs[idx - 1] : null;
-    var older = idx < dirs.Length - 1 ? dirs[idx + 1] : null;
+    var newer = idx > 0 ? events[idx - 1].Summary.Id : null;
+    var older = idx < events.Count - 1 ? events[idx + 1].Summary.Id : null;
 
     return Results.Ok(new EventNeighbors(older, newer));
 });
@@ -140,10 +125,10 @@ app.MapGet("/api/events/{id}/annotations", (string id) =>
     if (!IsSafeSegment(id)) return Results.BadRequest();
     var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
     if (!dir.Exists) return Results.NotFound();
-    return Results.Ok(ReadAnnotations(dir, jsonOptions));
+    return Results.Ok(EventIndex.ReadAnnotations(dir, jsonOptions));
 });
 
-app.MapPut("/api/events/{id}/annotations", async (string id, EventAnnotations body, CancellationToken ct) =>
+app.MapPut("/api/events/{id}/annotations", async (string id, EventAnnotations body, EventIndex index, CancellationToken ct) =>
 {
     if (!IsSafeSegment(id)) return Results.BadRequest();
     var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
@@ -173,6 +158,7 @@ app.MapPut("/api/events/{id}/annotations", async (string id, EventAnnotations bo
 
     var saved = body with { SchemaVersion = 1, UpdatedAt = DateTimeOffset.UtcNow };
     await WriteAnnotationsAsync(dir, saved, jsonOptions, ct);
+    index.Refresh(id);
     return Results.Ok(saved);
 });
 
@@ -215,24 +201,21 @@ app.MapPost("/api/events/{id}/auto-label", async (
     return Results.Ok(new AutoLabelResponse(results));
 });
 
-app.MapDelete("/api/events/{id}", (string id) =>
+app.MapDelete("/api/events/{id}", (string id, EventIndex index) =>
 {
     if (!IsSafeSegment(id)) return Results.BadRequest();
     var dir = new DirectoryInfo(Path.Combine(capturesDir, id));
     if (!dir.Exists) return Results.NotFound();
     dir.Delete(recursive: true);
+    index.Remove(id);
     return Results.NoContent();
 });
 
-app.MapGet("/api/subjects/names", (string? species) =>
+app.MapGet("/api/subjects/names", async (string? species, EventIndex index, CancellationToken ct) =>
 {
-    if (!Directory.Exists(capturesDir))
-        return Results.Ok(new SubjectNameList(Array.Empty<string>()));
-
-    var names = new DirectoryInfo(capturesDir)
-        .EnumerateDirectories("event_*")
-        .Select(d => ReadAnnotations(d, jsonOptions))
-        .SelectMany(a => a.Subjects)
+    await index.WhenReadyAsync(ct);
+    var names = index.Events
+        .SelectMany(e => e.Subjects)
         .Where(s => species is null || s.Species == species)
         .Select(s => s.Name)
         .Where(n => !string.IsNullOrWhiteSpace(n))
@@ -244,10 +227,16 @@ app.MapGet("/api/subjects/names", (string? species) =>
     return Results.Ok(new SubjectNameList(names));
 });
 
-app.MapGet("/api/metrics", async (MetricsReader reader, IConfiguration config) =>
+app.MapGet("/api/metrics", async (MetricsReader reader, IConfiguration config, EventIndex index) =>
 {
     var piUrl = config["Pi:MetricsUrl"];
-    return Results.Ok(await reader.ReadAsync(capturesDir, piUrl));
+    var metrics = await reader.ReadAsync(capturesDir, piUrl);
+    // Measuring the tree takes minutes on a large install, so the size comes
+    // from the index; null until its first scan completes.
+    var usage = index.IsReady
+        ? new CapturesUsage(index.TotalBytes, index.Events.Count, index.ScannedAt)
+        : null;
+    return Results.Ok(metrics with { CapturesUsage = usage });
 });
 
 app.MapGet("/api/stream", (IConfiguration config) =>
@@ -283,108 +272,9 @@ app.MapGet("/api/logs", async (int? lines, IHttpClientFactory httpFactory, IConf
 
 app.Run();
 
-static string ResolveCapturesDirectory(WebApplication app)
-{
-    var configured = app.Configuration["Captures:Directory"]
-        ?? throw new InvalidOperationException("Captures:Directory is not configured.");
-
-    return Path.IsPathRooted(configured)
-        ? configured
-        : Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, configured));
-}
-
 static bool IsSafeSegment(string s) =>
     !string.IsNullOrEmpty(s)
     && !s.Contains('/') && !s.Contains('\\') && !s.Contains("..");
-
-static EventSummary BuildSummary(DirectoryInfo dir, JsonSerializerOptions json)
-{
-    var jsonPath = Path.Combine(dir.FullName, "event.json");
-    if (File.Exists(jsonPath))
-    {
-        try
-        {
-            var sidecar = JsonSerializer.Deserialize<EventSidecar>(File.ReadAllText(jsonPath), json);
-            if (sidecar is not null)
-            {
-                var pendingVideo = string.IsNullOrEmpty(sidecar.VideoFile)
-                    && File.Exists(Path.Combine(dir.FullName, "recording-raw.mp4"));
-                var annotations = ReadAnnotations(dir, json);
-                return new EventSummary(
-                    Id: sidecar.Id ?? dir.Name,
-                    StartedAt: sidecar.StartedAt ?? dir.CreationTimeUtc,
-                    EndedAt: sidecar.EndedAt,
-                    SnapshotCount: sidecar.SnapshotCount ?? CountSnapshots(dir),
-                    HasVideo: !string.IsNullOrEmpty(sidecar.VideoFile),
-                    VideoFile: sidecar.VideoFile,
-                    TriggerFile: sidecar.TriggerFile ?? FirstSnapshot(dir),
-                    Species: (IReadOnlyList<string>?)sidecar.Species ?? Array.Empty<string>(),
-                    InProgress: sidecar.EndedAt is null,
-                    PendingVideo: pendingVideo,
-                    AnnotatedSubjectCount: annotations.Subjects.Count,
-                    SubjectNames: ExtractSubjectNames(annotations));
-            }
-        }
-        catch
-        {
-            // Fall through to filesystem inference.
-        }
-    }
-
-    return InferSummary(dir, json);
-}
-
-static EventSummary InferSummary(DirectoryInfo dir, JsonSerializerOptions json)
-{
-    var videoFile = dir.EnumerateFiles("recording.mp4").FirstOrDefault();
-    var rawFile = dir.EnumerateFiles("recording-raw.mp4").FirstOrDefault();
-    var annotations = ReadAnnotations(dir, json);
-    return new EventSummary(
-        Id: dir.Name,
-        StartedAt: dir.CreationTimeUtc,
-        EndedAt: null,
-        SnapshotCount: CountSnapshots(dir),
-        HasVideo: videoFile is not null,
-        VideoFile: videoFile?.Name,
-        TriggerFile: FirstSnapshot(dir),
-        Species: Array.Empty<string>(),
-        InProgress: true,
-        PendingVideo: videoFile is null && rawFile is not null,
-        AnnotatedSubjectCount: annotations.Subjects.Count,
-        SubjectNames: ExtractSubjectNames(annotations));
-}
-
-static IReadOnlyList<string> ExtractSubjectNames(EventAnnotations annotations) =>
-    annotations.Subjects
-        .Select(s => s.Name)
-        .Where(n => !string.IsNullOrWhiteSpace(n))
-        .Select(n => n!)
-        .ToArray();
-
-static int CountSnapshots(DirectoryInfo dir) =>
-    dir.EnumerateFiles("*.jpg").Count()
-    + dir.EnumerateFiles("*.jpeg").Count()
-    + dir.EnumerateFiles("*.png").Count();
-
-static string? FirstSnapshot(DirectoryInfo dir) =>
-    dir.EnumerateFiles("*.jpg")
-        .Concat(dir.EnumerateFiles("*.jpeg"))
-        .Concat(dir.EnumerateFiles("*.png"))
-        .OrderBy(f => f.Name)
-        .FirstOrDefault()?.Name;
-
-static EventAnnotations ReadAnnotations(DirectoryInfo dir, JsonSerializerOptions json)
-{
-    var path = Path.Combine(dir.FullName, "annotations.json");
-    if (!File.Exists(path))
-        return new EventAnnotations(1, DateTimeOffset.MinValue, [], []);
-    try
-    {
-        var a = JsonSerializer.Deserialize<EventAnnotations>(File.ReadAllText(path), json);
-        return a ?? new EventAnnotations(1, DateTimeOffset.MinValue, [], []);
-    }
-    catch { return new EventAnnotations(1, DateTimeOffset.MinValue, [], []); }
-}
 
 static async Task WriteAnnotationsAsync(DirectoryInfo dir, EventAnnotations annotations,
     JsonSerializerOptions json, CancellationToken ct)

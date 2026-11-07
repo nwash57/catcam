@@ -158,6 +158,14 @@ export interface DeviceMetrics {
   rootDisk: PiDiskInfo | null;
   captures: CapturesInfo | null;
   piReachable: boolean | null;
+  capturesUsage: CapturesUsage | null;
+}
+
+/** Space taken by the captures directory itself, from the server's event index. */
+export interface CapturesUsage {
+  totalBytes: number;
+  eventCount: number;
+  scannedAt: string | null;
 }
 
 export type HealthStatus = 'ok' | 'warn' | 'fail';

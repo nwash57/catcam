@@ -9,8 +9,9 @@ namespace CatCam.Api;
 /// up on its own — it exists because an outage once ran for two months behind a
 /// UI that looked fine and nobody had reason to visit.
 /// </summary>
-public sealed class HealthMonitor(
+internal sealed class HealthMonitor(
     HealthService health,
+    CapturesDirectory captures,
     IConfiguration config,
     IHttpClientFactory httpFactory,
     ILogger<HealthMonitor> logger) : BackgroundService
@@ -26,10 +27,6 @@ public sealed class HealthMonitor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var capturesDir = config["Captures:Directory"];
-        if (string.IsNullOrWhiteSpace(capturesDir))
-            return;
-
         if (string.IsNullOrWhiteSpace(Topic))
             logger.LogInformation("Health monitoring active; ntfy alerts disabled (no Health:NtfyTopic).");
 
@@ -40,7 +37,7 @@ public sealed class HealthMonitor(
         {
             try
             {
-                var report = await health.CheckAsync(capturesDir, stoppingToken);
+                var report = await health.CheckAsync(captures.Path, stoppingToken);
                 await ReactAsync(report, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

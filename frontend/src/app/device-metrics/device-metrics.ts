@@ -94,6 +94,17 @@ export class DeviceMetricsPanel implements OnInit, OnDestroy {
     return (d.usedBytes / d.totalBytes) * 100;
   }
 
+  protected capturesPercent(m: DeviceMetrics): number {
+    const total = m.disk?.totalBytes;
+    if (!total || !m.capturesUsage) return 0;
+    return Math.min(100, (m.capturesUsage.totalBytes / total) * 100);
+  }
+
+  /** Used space on the volume that isn't captures, so the bar adds up to diskPercent. */
+  protected otherUsedPercent(m: DeviceMetrics): number {
+    return Math.max(0, (this.diskPercent(m.disk) ?? 0) - this.capturesPercent(m));
+  }
+
   protected formatLoad(load: DeviceMetrics['loadAverage']): string {
     if (!load) return '—';
     return `${load.oneMinute.toFixed(2)} · ${load.fiveMinute.toFixed(2)} · ${load.fifteenMinute.toFixed(2)}`;
