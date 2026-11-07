@@ -8,6 +8,7 @@ import cv2
 from cat_detect.camera import Camera
 from cat_detect.detect_worker import DetectWorker
 from cat_detect.detector import Detector
+from cat_detect.health import log, state
 from cat_detect.notify import send_notification
 from cat_detect.recorder import Recorder
 from cat_detect.stream import start_stream
@@ -66,6 +67,7 @@ def run():
     detector = Detector(args.model, args.threshold)
     cooldown_tracker = {}
     captures_dir = Path(args.captures_dir)
+    state.set_captures_dir(captures_dir)
 
     recorder = Recorder(timeout=args.record_timeout, fps=args.fps, captures_dir=captures_dir,
                         no_transcode=args.no_transcode)
@@ -75,14 +77,15 @@ def run():
     if args.stream:
         stream = start_stream(args.stream_port)
 
-    print(f"Starting wildlife detector (camera={args.camera}, fps={args.fps}, "
-          f"detect_interval={args.detect_interval}s, snapshot_interval={args.snapshot_interval}s)")
+    log(f"Starting wildlife detector (camera={args.camera}, fps={args.fps}, "
+        f"detect_interval={args.detect_interval}s, snapshot_interval={args.snapshot_interval}s)")
     if stream:
-        print(f"MJPEG stream → http://0.0.0.0:{args.stream_port}/")
+        log(f"MJPEG stream → http://0.0.0.0:{args.stream_port}/")
     if args.ntfy:
-        print(f"Notifications → ntfy.sh/{args.ntfy} (cooldown={args.cooldown}s)")
-    print(f"Video recording enabled (timeout={args.record_timeout}s)")
-    print("Press Ctrl+C to stop.\n")
+        log(f"Notifications → ntfy.sh/{args.ntfy} (cooldown={args.cooldown}s)")
+    log(f"Video recording enabled (timeout={args.record_timeout}s)")
+    log(f"Captures → {captures_dir.resolve()}")
+    log("Press Ctrl+C to stop.\n")
 
     frame_period = 1.0 / args.fps
     cached_detections: list[dict] = []
@@ -97,7 +100,7 @@ def run():
 
                 frame = cam.read_frame()
                 if frame is None:
-                    print("Warning: failed to grab frame, retrying...")
+                    log("Warning: failed to grab frame, retrying...", level="warn")
                     time.sleep(0.5)
                     continue
 
@@ -166,7 +169,7 @@ def run():
 
     if args.show:
         cv2.destroyAllWindows()
-    print("Stopped.")
+    log("Stopped.")
 
 
 if __name__ == "__main__":

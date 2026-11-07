@@ -120,6 +120,30 @@ export interface ThrottledInfo {
   throttledEver: boolean;
 }
 
+export interface PiDiskInfo {
+  totalBytes: number;
+  freeBytes: number;
+  usedBytes: number;
+  percentUsed: number | null;
+}
+
+export interface WriteErrorInfo {
+  at: string | null;
+  message: string | null;
+}
+
+export interface CapturesInfo {
+  path: string | null;
+  detectorStartedAt: string | null;
+  lastEventAt: string | null;
+  lastEventId: string | null;
+  lastWriteError: WriteErrorInfo | null;
+  mountPoint: string | null;
+  onRootFilesystem: boolean | null;
+  writable: boolean | null;
+  disk: PiDiskInfo | null;
+}
+
 export interface DeviceMetrics {
   hostname: string;
   os: string;
@@ -131,6 +155,37 @@ export interface DeviceMetrics {
   memory: MemoryInfo | null;
   disk: DiskInfo | null;
   throttled: ThrottledInfo | null;
+  rootDisk: PiDiskInfo | null;
+  captures: CapturesInfo | null;
+  piReachable: boolean | null;
+}
+
+export type HealthStatus = 'ok' | 'warn' | 'fail';
+
+export interface HealthCheck {
+  id: string;
+  title: string;
+  status: HealthStatus;
+  detail: string;
+  hint: string | null;
+}
+
+export interface HealthReport {
+  status: HealthStatus;
+  checkedAt: string;
+  lastEventAt: string | null;
+  checks: HealthCheck[];
+}
+
+export interface LogLine {
+  at: string | null;
+  level: string | null;
+  message: string | null;
+}
+
+export interface LogPage {
+  lines: LogLine[];
+  error: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -186,5 +241,13 @@ export class CatcamApi {
 
   getMetrics(): Observable<DeviceMetrics> {
     return this.http.get<DeviceMetrics>('/api/metrics');
+  }
+
+  getHealth(): Observable<HealthReport> {
+    return this.http.get<HealthReport>('/api/health');
+  }
+
+  getLogs(lines = 200): Observable<LogPage> {
+    return this.http.get<LogPage>('/api/logs', { params: new HttpParams().set('lines', lines) });
   }
 }

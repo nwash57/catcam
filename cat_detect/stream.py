@@ -4,17 +4,23 @@ import socket
 import subprocess
 import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs, urlparse
 
 import cv2
 
+from cat_detect.health import recent_logs, root_disk, state
+
 
 class MJPEGHandler(BaseHTTPRequestHandler):
-    """Serves the latest camera frame as MJPEG and device metrics as JSON."""
+    """Serves the latest camera frame as MJPEG, plus metrics and logs as JSON."""
 
     def do_GET(self):
-        if self.path == "/metrics":
+        route = urlparse(self.path)
+        if route.path == "/metrics":
             self._serve_metrics()
-        elif self.path == "/":
+        elif route.path == "/logs":
+            self._serve_logs(parse_qs(route.query))
+        elif route.path == "/":
             self._serve_stream()
         else:
             self.send_error(404)
@@ -42,7 +48,17 @@ class MJPEGHandler(BaseHTTPRequestHandler):
                 break
 
     def _serve_metrics(self):
-        data = _build_metrics(self.server)
+        self._serve_json(_build_metrics(self.server))
+
+    def _serve_logs(self, query):
+        try:
+            limit = int(query.get("lines", ["200"])[0])
+        except (TypeError, ValueError):
+            limit = 200
+        limit = max(1, min(limit, 500))
+        self._serve_json({"lines": recent_logs(limit)})
+
+    def _serve_json(self, data):
         body = json.dumps(data).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -203,4 +219,8 @@ def _build_metrics(server: StreamServer) -> dict:
         "loadAverage": _read_load_avg(),
         "memory": _read_memory(),
         "throttled": _read_throttled(),
+        # The Pi's own disk. Distinct from the server's view of the captures
+        # volume: when a share silently unmounts, this is the one that fills.
+        "rootDisk": root_disk(),
+        "captures": state.snapshot(),
     }

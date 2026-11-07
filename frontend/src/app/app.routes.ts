@@ -21,5 +21,9 @@ export const routes: Routes = [
     path: 'live',
     loadComponent: () => import('./live/live').then(m => m.LiveView),
   },
+  {
+    path: 'diagnostics',
+    loadComponent: () => import('./diagnostics/diagnostics').then(m => m.Diagnostics),
+  },
   { path: '**', redirectTo: '' },
 ];

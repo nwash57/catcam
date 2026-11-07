@@ -1,0 +1,9 @@
+<a
+  routerLink="/diagnostics"
+  class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition hover:brightness-95"
+  [class]="pillClass()"
+  [title]="failing().length ? failing()[0].detail : 'All checks passing'"
+>
+  <span class="h-2 w-2 rounded-full" [class]="dotClass()"></span>
+  {{ label() }}
+</a>
