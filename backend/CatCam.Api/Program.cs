@@ -8,9 +8,15 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<MetricsReader>();
+builder.Services.AddSingleton<HealthService>();
 builder.Services.AddHostedService<TranscodeService>();
+builder.Services.AddHostedService<HealthMonitor>();
 builder.Services.AddHttpClient("AutoLabel")
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromMinutes(5));
+builder.Services.AddHttpClient("Ntfy")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient("PiLogs")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(5));
 
 const string AngularDevCors = "AngularDev";
 builder.Services.AddCors(options =>
@@ -250,6 +256,31 @@ app.MapGet("/api/stream", (IConfiguration config) =>
     return Results.Ok(new StreamConfig(string.IsNullOrWhiteSpace(url) ? null : url));
 });
 
+app.MapGet("/api/health", async (HealthService health, CancellationToken ct) =>
+    Results.Ok(await health.CheckAsync(capturesDir, ct)));
+
+// Proxied rather than fetched from the browser: the Pi is often on a network the
+// client can't reach, and this keeps its address out of the frontend.
+app.MapGet("/api/logs", async (int? lines, IHttpClientFactory httpFactory, IConfiguration config, CancellationToken ct) =>
+{
+    var piUrl = config["Pi:MetricsUrl"];
+    if (string.IsNullOrWhiteSpace(piUrl))
+        return Results.Ok(new LogPage(Array.Empty<LogLine>(), "No detector metrics URL configured."));
+
+    var take = Math.Clamp(lines ?? 200, 1, 500);
+    try
+    {
+        var client = httpFactory.CreateClient("PiLogs");
+        var page = await client.GetFromJsonAsync<LogPage>(
+            $"{piUrl.TrimEnd('/')}/logs?lines={take}", jsonOptions, ct);
+        return Results.Ok(page ?? new LogPage(Array.Empty<LogLine>(), "Detector returned no logs."));
+    }
+    catch (Exception ex)
+    {
+        return Results.Ok(new LogPage(Array.Empty<LogLine>(), $"Could not reach the detector: {ex.Message}"));
+    }
+});
+
 app.Run();
 
 static string ResolveCapturesDirectory(WebApplication app)
@@ -385,6 +416,10 @@ record EventDetail(EventSummary Summary, IReadOnlyList<MediaFile> Snapshots);
 record EventPage(IReadOnlyList<EventSummary> Items, int Total);
 
 record StreamConfig(string? Url);
+
+record LogLine(DateTimeOffset? At, string? Level, string? Message);
+
+record LogPage(IReadOnlyList<LogLine> Lines, string? Error = null);
 
 record EventNeighbors(string? OlderId, string? NewerId);
 

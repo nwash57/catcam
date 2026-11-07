@@ -110,6 +110,10 @@ server box.
   configured.
 - **Device metrics** — CPU temperature, memory, disk, and load average pulled
   from the Pi (when `PI_METRICS_URL` is set) or the server box.
+- **Diagnostics** (`/diagnostics`) — health checks, where the detector is
+  actually writing, both disks, and a live tail of the detector's log. A status
+  pill in the header shows the same verdict from every page. See
+  [Health and alerting](#health-and-alerting).
 
 ## Options
 
@@ -141,7 +145,13 @@ server box.
 
 The Pi handles only camera capture, detection, and streaming. The server box
 handles storage, transcoding, and the web UI. The Pi writes directly to a
-directory shared from the server over NFS.
+directory shared from the server — over NFS if the server runs Linux, or over
+SMB/CIFS if it runs Windows.
+
+> **Read [Keeping the share honest](#keeping-the-share-honest) before you
+> finish.** If the share ever fails to mount, the mount point is still a
+> perfectly writable local directory, and the detector will happily fill the
+> Pi's SD card for months without an obvious error.
 
 #### Step 1 — Set up the NFS share on the server box
 
@@ -164,6 +174,30 @@ sudo systemctl enable --now nfs-kernel-server
 > default — your first user). Adjust if your user has a different UID
 > (`id -u` to check).
 
+<details>
+<summary><strong>Windows server box instead?</strong> Share over SMB.</summary>
+
+Create a dedicated local account for the Pi rather than reusing your own login —
+a Microsoft-account credential breaks on password change or MFA, and it would
+have to sit in a file on the Pi. In an elevated PowerShell:
+
+```powershell
+New-LocalUser -Name catcam -Description 'SMB access for the CatCam Pi' -PasswordNeverExpires
+New-SmbShare -Name MediaShare -Path 'D:\MediaShare' -ChangeAccess catcam
+Enable-NetFirewallRule -DisplayGroup 'File and Printer Sharing'
+```
+
+Then grant the account NTFS `Modify` on the folder itself, and make sure the
+adapter's network profile is `Private` — on `Public`, Windows Firewall silently
+blocks inbound SMB:
+
+```powershell
+Get-NetConnectionProfile                     # check NetworkCategory
+Set-NetConnectionProfile -InterfaceAlias Ethernet -NetworkCategory Private
+```
+
+</details>
+
 #### Step 2 — Mount the share on the Pi
 
 ```bash
@@ -174,7 +208,21 @@ sudo mkdir -p /mnt/catcam
 Add to `/etc/fstab` so it mounts automatically on boot (replace `server-ip`):
 
 ```
-server-ip:/srv/catcam  /mnt/catcam  nfs  defaults,_netdev,rw  0  0
+server-ip:/srv/catcam  /mnt/catcam  nfs  defaults,_netdev,nofail,rw  0  0
+```
+
+For an SMB share, install `cifs-utils` and keep the credentials out of `fstab`
+(which is world-readable) by putting them in a root-only file:
+
+```bash
+sudo apt install cifs-utils
+printf 'username=catcam\npassword=SECRET\ndomain=SERVERNAME\n' \
+  | sudo tee /etc/samba/catcam.cred > /dev/null
+sudo chmod 600 /etc/samba/catcam.cred
+```
+
+```
+//SERVERNAME/MediaShare  /mnt/catcam  cifs  credentials=/etc/samba/catcam.cred,uid=1000,gid=1000,_netdev,nofail  0  0
 ```
 
 Mount it now without rebooting:
@@ -200,11 +248,13 @@ sudo nano /etc/systemd/system/catcam.service
 Description=Catcam wildlife detector
 After=network-online.target
 Wants=network-online.target
+RequiresMountsFor=/mnt/catcam
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/catcam
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/pi/catcam/.venv/bin/python -m cat_detect.main \
   --save \
   --stream \
@@ -220,10 +270,16 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-> `After=network-online.target` ensures the NFS mount is available before the
-> detector starts. If the Pi boots faster than the NFS comes up, also add
-> `After=mnt-catcam.mount` (systemd auto-generates a unit name from the
-> fstab mount point).
+Two lines here are load-bearing:
+
+- **`RequiresMountsFor=/mnt/catcam`** makes systemd pull in the corresponding
+  mount unit and refuse to start the detector unless the share is genuinely
+  mounted. Without it, a failed mount leaves an ordinary empty directory that
+  the detector will fill with captures nobody ever sees.
+- **`Environment=PYTHONUNBUFFERED=1`** makes the detector's output reach
+  `journalctl` as it happens. Without it Python block-buffers into the journal,
+  so errors only surface when the process dies — you can be hours or months into
+  a failure while `journalctl -f` shows nothing at all.
 
 #### Step 4 — Server box: Docker Compose
 
@@ -336,6 +392,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/catcam
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/pi/catcam/.venv/bin/python -m cat_detect.main \
   --save \
   --stream \
@@ -365,6 +422,75 @@ Without `--no-transcode` the Pi does its own ffmpeg transcode after each event.
 Install ffmpeg first: `sudo apt install ffmpeg`.
 
 ---
+
+## Health and alerting
+
+The server continuously checks whether the system is actually doing its job, and
+pushes to ntfy when the answer changes. Set `HEALTH_NTFY_TOPIC` in `.env` to
+enable pushes — it can be the same topic the Pi uses for detections.
+
+| Check | What it catches |
+|---|---|
+| Recent captures | Nothing recorded for 12h (warn) / 48h (fail). The catch-all: whatever broke, the event feed stopped. |
+| Captures destination | The detector is writing to its own disk because the share isn't mounted. |
+| Write errors | The detector is running but its last save failed. |
+| Detector reachable | The Pi is off, unreachable, or running without `--stream`. |
+| Detector disk | The Pi's own disk is filling — often the first symptom of a dropped share. |
+| Captures volume | The server's storage is filling. |
+| Power and throttling | Under-voltage or thermal throttling, which shows up as dropped frames. |
+
+Everything is visible at `/diagnostics`, and the header pill turns amber or red
+from any page. Alerts fire on transitions — degraded *and* recovered — and
+repeat every `HEALTH_REMINDER_HOURS` while a problem persists, so a fault can't
+scroll off your notification list and be forgotten.
+
+Thresholds and the poll interval are configurable; see the health block in
+`.env.example`. For an all-in-one install set `HEALTH_EXPECT_SHARED_CAPTURES=false`,
+otherwise writing to local disk is correctly reported as a fault.
+
+> **`PI_METRICS_URL` must be resolvable from inside the API container.** An
+> mDNS name like `catcam.local` works from your browser but not from Docker,
+> where it fails silently and the metrics panel quietly falls back to showing
+> the *server's* stats instead of the Pi's. Use an IP address.
+
+## Keeping the share honest
+
+The split setup has one failure mode worth designing against: **a mount point is
+still a writable directory when nothing is mounted on it.** If the share drops —
+the server reboots, its IP changes, a firewall profile flips to `Public`, an OS
+reinstall takes the share definition with it — the Pi does not error out. It
+writes captures to the bare mount point on the local SD card instead, at a few
+gigabytes a week, until the card is full. The detector looks healthy the entire
+time; the web UI just quietly stops showing new events.
+
+Guard against it on three levels:
+
+- **Refuse to run without the mount.** `RequiresMountsFor=` in the unit (see
+  [Step 3](#step-3--pi-systemd-service)) turns a silent misroute into a service
+  that visibly fails to start.
+- **Use `nofail` in `fstab`.** Without it a missing share can hang boot; with it
+  the mount fails cleanly and `RequiresMountsFor=` catches the rest.
+- **Watch for silence.** Nothing above helps if no one is looking. Treat "no new
+  events in a couple of days" as a fault worth alerting on, not as a quiet week
+  for wildlife.
+
+To check the current state:
+
+```bash
+findmnt /mnt/catcam        # empty output means NOT mounted
+df -h /                    # SD card filling up is the tell
+du -xh -d1 /mnt            # -x stays on one filesystem, so anything
+                           # reported here is local, not on the share
+```
+
+If you find stranded captures, stop the detector before cleaning up, and confirm
+the mount really is down before deleting anything — `rm -rf` against a mount
+point that *did* come back will erase the share itself:
+
+```bash
+sudo systemctl stop catcam
+mountpoint -q /mnt/catcam && echo "MOUNTED — do not delete" || echo "local — safe to clean"
+```
 
 ---
 

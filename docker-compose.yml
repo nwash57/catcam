@@ -23,6 +23,13 @@ services:
       Stream__Url: ${STREAM_URL:-}
       Pi__MetricsUrl: ${PI_METRICS_URL:-}
       AutoLabel__Url: ${AUTOLABEL_URL:-http://auto-label:8090}
+      # Health monitoring — see "Health and alerting" in the README.
+      Health__NtfyTopic: ${HEALTH_NTFY_TOPIC:-}
+      Health__PollSeconds: ${HEALTH_POLL_SECONDS:-300}
+      Health__ReminderHours: ${HEALTH_REMINDER_HOURS:-24}
+      Health__FreshnessWarnHours: ${HEALTH_FRESHNESS_WARN_HOURS:-12}
+      Health__FreshnessFailHours: ${HEALTH_FRESHNESS_FAIL_HOURS:-48}
+      Health__ExpectSharedCaptures: ${HEALTH_EXPECT_SHARED_CAPTURES:-true}
     volumes:
       - ${CAPTURES_DIR:-./captures}:/captures
     ports:

@@ -1,0 +1,183 @@
+<div class="space-y-8">
+  <header class="flex items-baseline justify-between gap-4">
+    <h1 class="text-xl font-semibold tracking-tight">Diagnostics</h1>
+    <span class="flex items-center gap-2 text-xs text-slate-500">
+      @if (healthBusy()) {
+        <span
+          class="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+          aria-hidden="true"
+        ></span>
+        <span>{{ healthLoaded() ? 'Refreshing…' : 'Running checks…' }}</span>
+      } @else if (health(); as h) {
+        <span>Checked {{ formatTime(h.checkedAt) }}</span>
+      }
+    </span>
+  </header>
+
+  <!-- Checks query the detector over the network, so the first paint is a
+       second or two out. Skeletons make that read as work-in-progress rather
+       than an empty page. -->
+  @if (!healthLoaded()) {
+    <section class="space-y-3" aria-busy="true" aria-label="Loading health checks">
+      @for (row of [1, 2, 3]; track row) {
+        <div class="animate-pulse rounded-lg border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2">
+            <div class="h-4 w-14 rounded bg-slate-200"></div>
+            <div class="h-4 w-40 rounded bg-slate-200"></div>
+          </div>
+          <div class="mt-3 h-3 w-2/3 rounded bg-slate-100"></div>
+        </div>
+      }
+    </section>
+  }
+
+  @if (healthError()) {
+    <p class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
+      Could not reach the API to run health checks.
+      @if (health()) {
+        Showing the last successful result.
+      }
+    </p>
+  }
+
+  <!-- Problems first: if something is wrong it should be the first thing read. -->
+  @if (problems().length) {
+    <section class="space-y-3">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Needs attention</h2>
+      @for (check of problems(); track check.id) {
+        <div class="rounded-lg border p-4" [class]="statusRowClass(check)">
+          <div class="flex items-center gap-2">
+            <span class="rounded px-2 py-0.5 text-xs font-semibold uppercase" [class]="statusBadgeClass(check)">
+              {{ check.status }}
+            </span>
+            <span class="font-medium">{{ check.title }}</span>
+          </div>
+          <p class="mt-2 text-sm text-slate-700">{{ check.detail }}</p>
+          @if (check.hint) {
+            <p class="mt-1 text-sm text-slate-500">{{ check.hint }}</p>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  @if (passing().length) {
+    <section class="space-y-3">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Passing</h2>
+      <div class="grid gap-2 sm:grid-cols-2">
+        @for (check of passing(); track check.id) {
+          <div class="rounded-lg border border-slate-200 bg-white p-3">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+              <span class="text-sm font-medium">{{ check.title }}</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">{{ check.detail }}</p>
+          </div>
+        }
+      </div>
+    </section>
+  }
+
+  <!-- Where the detector is writing. The field that matters is the mount: a
+       share that quietly unmounts leaves a writable local directory behind. -->
+  @if (!metricsLoaded()) {
+    <section class="space-y-3" aria-busy="true">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Captures destination</h2>
+      <div class="animate-pulse rounded-lg border border-slate-200 bg-white p-4">
+        <div class="grid gap-3 sm:grid-cols-2">
+          @for (cell of [1, 2, 3, 4]; track cell) {
+            <div>
+              <div class="h-3 w-24 rounded bg-slate-200"></div>
+              <div class="mt-2 h-3 w-40 rounded bg-slate-100"></div>
+            </div>
+          }
+        </div>
+      </div>
+    </section>
+  } @else if (captures(); as c) {
+    <section class="space-y-3">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Captures destination</h2>
+      <dl class="grid gap-x-6 gap-y-3 rounded-lg border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Path</dt>
+          <dd class="font-mono text-xs">{{ c.path ?? '—' }}</dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Mount point</dt>
+          <dd class="font-mono text-xs">
+            {{ c.mountPoint ?? '—' }}
+            @if (c.onRootFilesystem) {
+              <span class="ml-1 rounded bg-red-100 px-1.5 py-0.5 font-sans text-xs text-red-700">local disk</span>
+            }
+          </dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Last event written</dt>
+          <dd>{{ formatTime(c.lastEventAt) }} <span class="text-slate-400">{{ c.lastEventId }}</span></dd>
+        </div>
+        <div>
+          <dt class="text-xs uppercase tracking-wide text-slate-500">Free space there</dt>
+          <dd>{{ formatBytes(c.disk?.freeBytes) }} free of {{ formatBytes(c.disk?.totalBytes) }}</dd>
+        </div>
+        @if (c.lastWriteError) {
+          <div class="sm:col-span-2">
+            <dt class="text-xs uppercase tracking-wide text-red-600">Last write error</dt>
+            <dd class="text-sm text-red-700">{{ c.lastWriteError.message }}</dd>
+          </div>
+        }
+      </dl>
+    </section>
+  }
+
+  @if (metrics()?.rootDisk; as rd) {
+    <section class="space-y-3">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Detector host disk</h2>
+      <div class="rounded-lg border border-slate-200 bg-white p-4 text-sm">
+        <div class="flex items-center justify-between">
+          <span>{{ formatBytes(rd.usedBytes) }} used of {{ formatBytes(rd.totalBytes) }}</span>
+          <span class="text-slate-500">{{ rd.percentUsed ?? '—' }}%</span>
+        </div>
+        <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            class="h-full rounded-full"
+            [class]="(rd.percentUsed ?? 0) >= 90 ? 'bg-red-500' : (rd.percentUsed ?? 0) >= 75 ? 'bg-amber-500' : 'bg-emerald-500'"
+            [style.width.%]="rd.percentUsed ?? 0"
+          ></div>
+        </div>
+        <p class="mt-2 text-xs text-slate-500">
+          This is the detector's own disk, separate from the captures volume above.
+        </p>
+      </div>
+    </section>
+  }
+
+  <section class="space-y-3">
+    <h2 class="text-sm font-medium uppercase tracking-wide text-slate-500">Detector log</h2>
+    @if (logs(); as l) {
+      @if (l.error) {
+        <p class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">{{ l.error }}</p>
+      } @else if (!l.lines.length) {
+        <p class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">No log lines yet.</p>
+      } @else {
+        <div class="max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-slate-900 p-4">
+          @for (line of l.lines; track $index) {
+            <div class="flex gap-3 font-mono text-xs leading-relaxed">
+              <span class="shrink-0 text-slate-500">{{ formatClock(line.at) }}</span>
+              <span class="whitespace-pre-wrap break-all" [class]="line.level === 'error' ? 'text-red-400' : line.level === 'warn' ? 'text-amber-300' : 'text-slate-200'">{{ line.message }}</span>
+            </div>
+          }
+        </div>
+      }
+    } @else if (!logsLoaded()) {
+      <div class="animate-pulse space-y-2 rounded-lg border border-slate-200 bg-slate-900 p-4" aria-busy="true">
+        @for (row of [1, 2, 3, 4, 5]; track row) {
+          <div class="h-3 rounded bg-slate-700" [style.width.%]="40 + row * 9"></div>
+        }
+      </div>
+    } @else {
+      <p class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
+        Could not load the detector log.
+      </p>
+    }
+  </section>
+</div>

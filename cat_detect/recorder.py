@@ -8,6 +8,8 @@ from pathlib import Path
 
 import cv2
 
+from cat_detect.health import log, state
+
 
 class Recorder:
     """Owns the lifecycle of a detection event.
@@ -49,7 +51,8 @@ class Recorder:
         """Call on every detection tick. Starts a new event if none is active."""
         self._last_detection = time.monotonic()
         if self._event_dir is None:
-            self._start_event()
+            if not self._start_event():
+                return
         if species:
             self._species.update(species)
 
@@ -69,6 +72,8 @@ class Recorder:
         elapsed = time.monotonic() - self._last_detection
 
         if elapsed <= self.timeout:
+            if self._event_dir is None:
+                return  # event directory could not be created; nothing to write into
             if not self._writer:
                 self._start_writer(frame)
             self._writer.write(frame)
@@ -84,15 +89,31 @@ class Recorder:
         for t in self._finalize_threads:
             t.join()
 
-    def _start_event(self):
+    def _start_event(self) -> bool:
+        """Create the event directory. Returns False if the write failed.
+
+        A failure here used to take the whole detector down. Staying up is more
+        useful: the camera keeps streaming and /metrics can report *why* nothing
+        is being saved, which is what the server alerts on.
+        """
         started_at = datetime.datetime.now()
         event_id = f"event_{started_at.strftime('%Y%m%d_%H%M%S')}"
-        self._event_dir = self.captures_dir / event_id
-        self._event_dir.mkdir(parents=True, exist_ok=True)
+        event_dir = self.captures_dir / event_id
+        try:
+            event_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            state.note_write_error(f"Cannot create event directory {event_dir}: {e}")
+            log(f"  Error: cannot write to {self.captures_dir} ({e}) — event dropped.", level="error")
+            self._event_dir = None
+            return False
+
+        self._event_dir = event_dir
         self._event_started_at = started_at
         self._snapshot_count = 0
         self._species = set()
         self._trigger_file = None
+        state.note_event(event_id)
+        return True
 
     def _start_writer(self, frame):
         assert self._event_dir is not None
@@ -103,7 +124,7 @@ class Recorder:
         self._writer = cv2.VideoWriter(str(self._raw_path), fourcc, self.fps, (w, h))
         self._writer_started_at = time.monotonic()
         self._frames_written = 0
-        print(f"  Recording started → {self._raw_path}")
+        log(f"  Recording started → {self._raw_path}")
 
     def _end_event(self):
         ended_at = datetime.datetime.now()
@@ -149,11 +170,11 @@ class Recorder:
             writer.release()
             if no_transcode:
                 # Leave recording-raw.mp4 in place; the backend will transcode it.
-                print(f"  Recording written → {raw_path} (measured {measured_fps:.1f}fps, pending backend transcode)")
+                log(f"  Recording written → {raw_path} (measured {measured_fps:.1f}fps, pending backend transcode)")
             else:
                 final_video = self._finalize_video(raw_path, video_path, measured_fps)
                 if final_video is not None:
-                    print(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
+                    log(f"  Recording saved → {final_video} (measured {measured_fps:.1f}fps)")
 
         if event_dir is not None and event_started_at is not None:
             summary = {
@@ -166,7 +187,11 @@ class Recorder:
                 "species": sorted(species),
                 "measuredFps": round(measured_fps, 3),
             }
-            (event_dir / "event.json").write_text(json.dumps(summary, indent=2))
+            try:
+                (event_dir / "event.json").write_text(json.dumps(summary, indent=2))
+            except OSError as e:
+                state.note_write_error(f"Cannot write {event_dir / 'event.json'}: {e}")
+                log(f"  Error: cannot write event summary ({e}).", level="error")
 
     def _measured_fps(self) -> float:
         """Actual frame rate written to the raw file. Falls back to declared fps
@@ -187,7 +212,7 @@ class Recorder:
 
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
-            print("  Warning: ffmpeg not found; keeping raw mp4v recording (may not play in browsers).")
+            log("  Warning: ffmpeg not found; keeping raw mp4v recording (may not play in browsers).", level="warn")
             raw_path.rename(video_path)
             return video_path
 
@@ -209,7 +234,7 @@ class Recorder:
             raw_path.unlink(missing_ok=True)
             return video_path
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            print(f"  Warning: ffmpeg transcode failed ({e}); keeping raw mp4v recording.")
+            log(f"  Warning: ffmpeg transcode failed ({e}); keeping raw mp4v recording.", level="warn")
             if video_path.exists():
                 video_path.unlink()
             raw_path.rename(video_path)

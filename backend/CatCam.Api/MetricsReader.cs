@@ -14,8 +14,14 @@ public sealed class MetricsReader
     public async Task<DeviceMetrics> ReadAsync(string capturesDir, string? piMetricsUrl)
     {
         PiMetrics? pi = null;
+        bool? piReachable = null;
         if (!string.IsNullOrWhiteSpace(piMetricsUrl))
+        {
             pi = await FetchPiMetricsAsync(piMetricsUrl);
+            // Distinguish "no Pi configured" (null) from "Pi configured but down"
+            // (false). Without this the fallback to local metrics looks healthy.
+            piReachable = pi is not null;
+        }
 
         return new DeviceMetrics(
             Hostname: pi?.Hostname ?? Environment.MachineName,
@@ -27,7 +33,10 @@ public sealed class MetricsReader
             LoadAverage: pi?.LoadAverage ?? ReadLoadAverage(),
             Memory: pi?.Memory ?? ReadMemory(),
             Disk: ReadDisk(capturesDir),
-            Throttled: pi?.Throttled ?? ReadThrottled());
+            Throttled: pi?.Throttled ?? ReadThrottled(),
+            RootDisk: pi?.RootDisk,
+            Captures: pi?.Captures,
+            PiReachable: piReachable);
     }
 
     private static async Task<PiMetrics?> FetchPiMetricsAsync(string piMetricsUrl)
@@ -217,7 +226,9 @@ public sealed class MetricsReader
         double? CpuFrequencyMhz,
         LoadAverage? LoadAverage,
         MemoryInfo? Memory,
-        ThrottledInfo? Throttled);
+        ThrottledInfo? Throttled,
+        PiDiskInfo? RootDisk,
+        CapturesInfo? Captures);
 }
 
 public record DeviceMetrics(
@@ -230,7 +241,10 @@ public record DeviceMetrics(
     LoadAverage? LoadAverage,
     MemoryInfo? Memory,
     DiskInfo? Disk,
-    ThrottledInfo? Throttled);
+    ThrottledInfo? Throttled,
+    PiDiskInfo? RootDisk = null,
+    CapturesInfo? Captures = null,
+    bool? PiReachable = null);
 
 public record LoadAverage(double OneMinute, double FiveMinute, double FifteenMinute);
 
@@ -239,3 +253,25 @@ public record MemoryInfo(long TotalBytes, long AvailableBytes, long UsedBytes);
 public record DiskInfo(string Mount, long TotalBytes, long FreeBytes, long UsedBytes);
 
 public record ThrottledInfo(bool UnderVoltageNow, bool ThrottledNow, bool UnderVoltageEver, bool ThrottledEver);
+
+/// <summary>The detector host's own disk — the SD card, not the captures volume.</summary>
+public record PiDiskInfo(long TotalBytes, long FreeBytes, long UsedBytes, double? PercentUsed);
+
+/// <summary>
+/// Where the detector is actually writing, as seen from the detector itself.
+/// <c>OnRootFilesystem</c> is the important one: true means the captures path
+/// resolved to the Pi's own disk, which in a split setup means the share is not
+/// mounted and events are piling up locally where nothing will ever see them.
+/// </summary>
+public record CapturesInfo(
+    string? Path,
+    DateTimeOffset? DetectorStartedAt,
+    DateTimeOffset? LastEventAt,
+    string? LastEventId,
+    WriteErrorInfo? LastWriteError,
+    string? MountPoint,
+    bool? OnRootFilesystem,
+    bool? Writable,
+    PiDiskInfo? Disk);
+
+public record WriteErrorInfo(DateTimeOffset? At, string? Message);

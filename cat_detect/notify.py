@@ -1,6 +1,8 @@
 import datetime
 import requests
 
+from cat_detect.health import log
+
 
 def send_notification(
     detections: list[dict],
@@ -14,7 +16,7 @@ def send_notification(
 
     # Console log always
     for det in detections:
-        print(
+        log(
             f"[{timestamp}] Detected {det['label']} "
             f"(confidence={det['confidence']:.0%}) "
             f"bbox={det['bbox']}"
@@ -55,6 +57,6 @@ def send_notification(
                 headers={"Title": title, "Tags": "camera,eyes"},
                 timeout=10,
             )
-        print(f"  Notification sent to ntfy.sh/{ntfy_topic}")
+        log(f"  Notification sent to ntfy.sh/{ntfy_topic}")
     except requests.RequestException as e:
-        print(f"  Failed to send notification: {e}")
+        log(f"  Failed to send notification: {e}", level="warn")
