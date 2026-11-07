@@ -1,0 +1,4 @@
+# Test/dev dependencies for the Python services (cat_detect, auto_label, train).
+# Install with:  pip install -r requirements-dev.txt
+pytest>=8.0.0
+pytest-cov>=5.0.0

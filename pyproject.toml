@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+# `.` makes the `cat_detect` and `auto_label` packages importable; `train` is a
+# bare script directory, so it is added directly for `import prepare_dataset`.
+pythonpath = [".", "train"]
+testpaths = ["tests"]
+addopts = "-ra"

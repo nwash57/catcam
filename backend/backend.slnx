@@ -6,4 +6,5 @@
     <File Path="..\docker-compose.yml" />
   </Folder>
   <Project Path="CatCam.Api/CatCam.Api.csproj" />
+  <Project Path="CatCam.Api.Tests/CatCam.Api.Tests.csproj" />
 </Solution>
