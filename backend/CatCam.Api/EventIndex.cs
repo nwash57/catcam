@@ -67,10 +67,18 @@ internal sealed class EventIndex
         _snapshot.ById.TryGetValue(id, out var e) ? e : null;
 
     /// <summary>
-    /// Brings the index up to date with the filesystem. The first call scans
-    /// every event; later calls only rescan what changed.
+    /// Brings the index up to date with the filesystem, rescanning only events
+    /// whose directory changed.
+    ///
+    /// A full pass reads every directory's timestamp. That is free from a native
+    /// Windows listing but costs a stat per directory elsewhere — tens of seconds
+    /// for a large tree through a Docker Desktop bind mount. A quick pass instead
+    /// lists names only (catching new and deleted events) and checks timestamps
+    /// just for recent events, the only ones the detector and transcoder still
+    /// touch. Older events change only through the API, which refreshes them
+    /// directly; periodic full passes catch anything edited out of band.
     /// </summary>
-    public void Reconcile(CancellationToken ct = default)
+    public void Reconcile(bool full = true, CancellationToken ct = default)
     {
         var sw = Stopwatch.StartNew();
         var previous = _snapshot;
@@ -79,11 +87,29 @@ internal sealed class EventIndex
         // events are rescanned every pass. Bounded by age so an event the detector
         // abandoned (no event.json ever written) doesn't cost a rescan forever.
         var liveCutoff = DateTime.UtcNow - TimeSpan.FromHours(1);
+        // Names carry the detector's local time, which may not match ours; the
+        // window is wide enough to absorb any timezone offset.
+        var recentCutoff = "event_" + DateTime.Now.AddHours(-36).ToString("yyyyMMdd_HHmmss");
         var events = new List<IndexedEvent>(previous.Events.Count + 16);
-        long looseBytes = 0;
+        long looseBytes = full ? 0 : previous.LooseBytes;
         var rescanned = 0;
 
-        if (root.Exists)
+        void Consider(DirectoryInfo dir)
+        {
+            if (previous.ById.TryGetValue(dir.Name, out var known)
+                && known.DirWrittenAtUtc == dir.LastWriteTimeUtc
+                && !(known.Summary.InProgress && known.DirWrittenAtUtc > liveCutoff))
+            {
+                events.Add(known);
+            }
+            else
+            {
+                events.Add(Scan(dir));
+                rescanned++;
+            }
+        }
+
+        if (root.Exists && full)
         {
             foreach (var info in root.EnumerateFileSystemInfos())
             {
@@ -94,20 +120,31 @@ internal sealed class EventIndex
                         looseBytes += f.Length;
                         break;
                     case DirectoryInfo d when d.Name.StartsWith("event_", StringComparison.Ordinal):
-                        // LastWriteTimeUtc comes from the directory listing itself,
-                        // so checking for changes costs no extra I/O per event.
-                        if (previous.ById.TryGetValue(d.Name, out var known)
-                            && known.DirWrittenAtUtc == d.LastWriteTimeUtc
-                            && !(known.Summary.InProgress && known.DirWrittenAtUtc > liveCutoff))
-                        {
-                            events.Add(known);
-                        }
-                        else
-                        {
-                            events.Add(Scan(d));
-                            rescanned++;
-                        }
+                        // On NTFS the timestamp in the parent's listing is a lazily
+                        // updated copy and can miss changes inside the directory;
+                        // re-read it from the directory itself. (Unix listings
+                        // already stat each entry, so this would be a second one.)
+                        if (OperatingSystem.IsWindows()) d.Refresh();
+                        Consider(d);
                         break;
+                }
+            }
+        }
+        else if (root.Exists)
+        {
+            // Names only: no per-entry stat, so this stays cheap on any filesystem.
+            foreach (var path in Directory.EnumerateDirectories(_capturesDir, "event_*"))
+            {
+                ct.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(path);
+                if (previous.ById.TryGetValue(name, out var known)
+                    && string.CompareOrdinal(name, recentCutoff) < 0)
+                {
+                    events.Add(known);
+                }
+                else
+                {
+                    Consider(new DirectoryInfo(path));
                 }
             }
         }
@@ -125,10 +162,13 @@ internal sealed class EventIndex
                 events.Count, _snapshot.TotalBytes, sw.ElapsedMilliseconds);
             _ready.TrySetResult();
         }
-        else if (rescanned > 0)
+        else
         {
-            _logger.LogDebug("Reconciled index: rescanned {Rescanned} of {Count} events in {Ms} ms",
-                rescanned, events.Count, sw.ElapsedMilliseconds);
+            // Slow passes are worth seeing: they mean the filesystem is costing
+            // more than expected (e.g. a bind mount) and new events lag behind.
+            var level = sw.Elapsed > TimeSpan.FromSeconds(5) ? LogLevel.Information : LogLevel.Debug;
+            _logger.Log(level, "Reconciled index ({Pass} pass): rescanned {Rescanned} of {Count} events in {Ms} ms",
+                full ? "full" : "quick", rescanned, events.Count, sw.ElapsedMilliseconds);
         }
     }
 
@@ -285,12 +325,16 @@ internal sealed class EventIndexer(EventIndex index, IConfiguration config, ILog
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var interval = TimeSpan.FromSeconds(config.GetValue("Index:ReconcileSeconds", 15.0));
+        var fullEvery = TimeSpan.FromMinutes(config.GetValue("Index:FullSweepMinutes", 60.0));
+        var lastFull = DateTimeOffset.MinValue;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                var full = DateTimeOffset.UtcNow - lastFull >= fullEvery;
                 // Off the startup path: the scan can take a while on a large tree.
-                await Task.Run(() => index.Reconcile(stoppingToken), stoppingToken);
+                await Task.Run(() => index.Reconcile(full, stoppingToken), stoppingToken);
+                if (full) lastFull = DateTimeOffset.UtcNow;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

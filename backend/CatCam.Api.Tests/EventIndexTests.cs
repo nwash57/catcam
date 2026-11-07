@@ -67,6 +67,27 @@ public sealed class EventIndexTests : IDisposable
     }
 
     [Fact]
+    public void QuickReconcile_PicksUpAddedAndRemovedEvents_ButLeavesOldEventsForFullPass()
+    {
+        var old = MakeEvent("event_20200101_000000");
+        var gone = MakeEvent("event_20200102_000000");
+        _index.Reconcile();
+
+        var recent = "event_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        MakeEvent(recent);
+        Directory.Delete(gone, recursive: true);
+        File.WriteAllText(Path.Combine(old, "annotations.json"),
+            """{"schemaVersion":1,"updatedAt":"2026-01-01T00:00:00Z","subjects":[{"id":"s1","species":"cat","name":"Tom"}],"snapshots":[]}""");
+        _index.Reconcile(full: false);
+
+        Assert.Equal([recent, "event_20200101_000000"], _index.Events.Select(e => e.Summary.Id));
+        Assert.Empty(_index.Get("event_20200101_000000")!.Summary.SubjectNames);
+
+        _index.Reconcile(full: true);
+        Assert.Equal(["Tom"], _index.Get("event_20200101_000000")!.Summary.SubjectNames);
+    }
+
+    [Fact]
     public void Reconcile_SeesEventFinishing()
     {
         var id = "event_20260101_000000";
